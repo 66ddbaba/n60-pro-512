@@ -120,6 +120,19 @@ sed -i 's/^CONFIG_PACKAGE_terminfo=y/# CONFIG_PACKAGE_terminfo is not set/' .con
 sed -i 's/^CONFIG_PACKAGE_libncurses=y/# CONFIG_PACKAGE_libncurses is not set/' .config
 echo "  移除: terminfo, libncurses (随调试工具移除)"
 
+# --- 移除: IPv6 相关组件 (用户不需要 IPv6) ---
+# 注意: 保留 kmod-ipv6 和 kmod-ip6tables (内核基础, 避免隐性依赖问题)
+# 只移除 IPv6 用户态工具和服务, 不动内核协议栈
+sed -i 's/^CONFIG_PACKAGE_ip6tables-extra=y/# CONFIG_PACKAGE_ip6tables-extra is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_ip6tables-nft=y/# CONFIG_PACKAGE_ip6tables-nft is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_kmod-ipt-raw6=y/# CONFIG_PACKAGE_kmod-ipt-raw6 is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_odhcp6c=y/# CONFIG_PACKAGE_odhcp6c is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_odhcpd-ipv6only=y/# CONFIG_PACKAGE_odhcpd-ipv6only is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_luci-proto-ipv6=y/# CONFIG_PACKAGE_luci-proto-ipv6 is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_luci-proto-6in4=y/# CONFIG_PACKAGE_luci-proto-6in4 is not set/' .config
+echo "  移除: IPv6 用户态工具 (ip6tables-extra/nft, raw6, odhcp6c, odhcpd-ipv6only, luci-proto-ipv6/6in4)"
+echo "  保留: kmod-ipv6, kmod-ip6tables (内核基础, 避免隐性依赖)"
+
 echo "  精简完成"
 
 # ------------------------------------------------------------
