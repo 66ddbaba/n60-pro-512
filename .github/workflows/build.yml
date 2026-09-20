@@ -114,21 +114,27 @@ jobs:
 
       # ===== 第9步: 编译固件 =====
       - name: Build firmware
+        id: Build
         run: |
           cd openwrt
           make -j$(nproc) V=w 2>&1 | tail -200
           echo "=== 固件文件 ==="
           find bin/ -name "*n60*" -type f 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到固件"
 
-      # ===== 第10步: 重命名固件并上传到 Releases =====
-      - name: Rename and publish to Releases
+      # ===== 第10步: 重命名固件 =====
+      - name: Rename firmware files
         if: success()
         run: |
           cd openwrt
 
-          # 获取版本号
-          VERSION=$(grep 'VERSION_NUMBER' include/version.mk 2>/dev/null | head -1 | sed 's/.*:= *//' | tr -d '"' | tr -d ' ')
+          # 获取版本号 (用 ^VERSION_NUMBER 避免匹配到 CONFIG_VERSION_NUMBER)
+          VERSION=$(grep -m1 '^VERSION_NUMBER' include/version.mk 2>/dev/null | sed 's/.*:=[[:space:]]*//' | tr -d '"' | tr -d ' ' | tr -d '\\')
           VERSION=${VERSION:-24.10.0}
+          # 验证版本号格式 (应该是 x.y.z 格式)
+          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?'; then
+            echo "警告: 版本号提取异常 '$VERSION', 使用默认值 24.10.0"
+            VERSION="24.10.0"
+          fi
           DATE=$(date +%Y%m%d)
           TAG="v${VERSION}-${DATE}"
 
@@ -191,7 +197,7 @@ jobs:
 
       # ===== 第11步: 创建 GitHub Release =====
       - name: Create Release
-        if: success()
+        if: success() && steps.Build.outcome == 'success'
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ env.RELEASE_TAG }}
@@ -255,4 +261,14 @@ jobs:
             openwrt/tmp/
             openwrt/logs/
           retention-days: 3
+          if-no-files-found: warn
+
+      # ===== 第14步: 备用 - 上传固件到 Artifacts (无论 Release 成功与否) =====
+      - name: Upload firmware to Artifacts (backup)
+        if: always() && steps.Build.outcome == 'success'
+        uses: actions/upload-artifact@v6
+        with:
+          name: N60-Pro-512M-Firmware
+          path: /tmp/firmware/
+          retention-days: 7
           if-no-files-found: warn
