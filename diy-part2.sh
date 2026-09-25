@@ -133,6 +133,46 @@ sed -i 's/^CONFIG_PACKAGE_luci-proto-6in4=y/# CONFIG_PACKAGE_luci-proto-6in4 is 
 echo "  移除: IPv6 用户态工具 (ip6tables-extra/nft, raw6, odhcp6c, odhcpd-ipv6only, luci-proto-ipv6/6in4)"
 echo "  保留: kmod-ipv6, kmod-ip6tables (内核基础, 避免隐性依赖)"
 
+# --- 移除: 广告过滤 (非核心, 日后可装) ---
+sed -i 's/^CONFIG_PACKAGE_blockd=y/# CONFIG_PACKAGE_blockd is not set/' .config
+echo "  移除: blockd (广告过滤, 日后可装)"
+
+# --- 移除: 寄存器/PHY 调试工具 ---
+sed -i 's/^CONFIG_PACKAGE_regs=y/# CONFIG_PACKAGE_regs is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_mii_mgr=y/# CONFIG_PACKAGE_mii_mgr is not set/' .config
+echo "  移除: regs, mii_mgr (寄存器/PHY调试工具)"
+
+# --- 移除: 输入设备库 (路由器不需要键盘鼠标等) ---
+sed -i 's/^CONFIG_PACKAGE_libfido2=y/# CONFIG_PACKAGE_libfido2 is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_libevdev=y/# CONFIG_PACKAGE_libevdev is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_libudev-zero=y/# CONFIG_PACKAGE_libudev-zero is not set/' .config
+echo "  移除: libfido2, libevdev, libudev-zero (输入设备库, 路由器不需要)"
+
+# --- 移除: SSH 密钥生成 (dropbear 自带, openssh-keygen 多余) ---
+sed -i 's/^CONFIG_PACKAGE_openssh-keygen=y/# CONFIG_PACKAGE_openssh-keygen is not set/' .config
+echo "  移除: openssh-keygen (dropbear 已提供 SSH)"
+
+# --- 移除: automount (远程网络文件系统按需挂载, 用户需要挂载远程SMB, 保留) ---
+# 注意: kmod-fs-autofs4 保留, 用于按需挂载远程网络文件系统
+# echo "  不移除: kmod-fs-autofs4 (用于远程文件按需挂载)"
+
+# --- 移除: kvc 配置库 (kvcedit 已移除, 不再需要) ---
+sed -i 's/^CONFIG_PACKAGE_libkvcutil=y/# CONFIG_PACKAGE_libkvcutil is not set/' .config
+echo "  移除: libkvcutil (kvcedit 配套库)"
+
+# --- 移除: resolveip (DNS解析工具, dnsmasq已提供) ---
+sed -i 's/^CONFIG_PACKAGE_resolveip=y/# CONFIG_PACKAGE_resolveip is not set/' .config
+echo "  移除: resolveip (DNS解析工具)"
+
+# --- 移除: zram-swap (2GB 内存足够, 不需要内存压缩) ---
+sed -i 's/^CONFIG_PACKAGE_zram-swap=y/# CONFIG_PACKAGE_zram-swap is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_kmod-zram=y/# CONFIG_PACKAGE_kmod-zram is not set/' .config
+echo "  移除: zram-swap (2GB内存足够, 不需要内存压缩)"
+
+# --- 移除: liblzo (zram 移除后不再需要) ---
+sed -i 's/^CONFIG_PACKAGE_kmod-lib-lzo=y/# CONFIG_PACKAGE_kmod-lib-lzo is not set/' .config
+echo "  移除: kmod-lib-lzo (zram 配套压缩库)"
+
 echo "  精简完成"
 
 # ------------------------------------------------------------
@@ -181,7 +221,43 @@ EOF
 echo "  EasyTier 已添加"
 
 # ------------------------------------------------------------
-# 8. 添加 luci-theme-argon 主题
+# 8. 添加 ddns-go (sirpdboy)
+# ------------------------------------------------------------
+echo ""
+echo "--- 1.8 添加 ddns-go ---"
+cat >> .config << 'EOF'
+
+# ===== ddns-go 动态域名 (sirpdboy) =====
+CONFIG_PACKAGE_luci-app-ddns-go=y
+EOF
+echo "  ddns-go 已添加"
+
+# ------------------------------------------------------------
+# 8.5 添加文件共享 (Samba + CIFS 挂载)
+# ------------------------------------------------------------
+echo ""
+echo "--- 1.85 添加文件共享 (Samba + CIFS) ---"
+cat >> .config << 'EOF'
+
+# ===== Samba 网络共享 (共享到局域网) =====
+CONFIG_PACKAGE_samba4-server=y
+CONFIG_PACKAGE_luci-app-samba4=y
+CONFIG_PACKAGE_wsdd2=y
+
+# ===== CIFS 客户端 (挂载远程 SMB) =====
+CONFIG_PACKAGE_kmod-fs-cifs=y
+CONFIG_PACKAGE_cifsmount=y
+
+# ===== NLS 字符集 (CIFS 需要) =====
+CONFIG_PACKAGE_kmod-nls-base=y
+CONFIG_PACKAGE_kmod-nls-utf8=y
+CONFIG_PACKAGE_kmod-nls-cp437=y
+CONFIG_PACKAGE_kmod-nls-iso8859-1=y
+EOF
+echo "  文件共享已添加 (samba4 + cifs)"
+
+# ------------------------------------------------------------
+# 9. 添加 luci-theme-argon 主题
 # ------------------------------------------------------------
 echo ""
 echo "--- 1.8 添加 luci-theme-argon 主题 ---"
@@ -231,6 +307,16 @@ echo "[EasyTier]"
 grep -E "CONFIG_PACKAGE_easytier|CONFIG_PACKAGE_luci-app-easytier" .config || echo "  (未找到 EasyTier!)"
 
 echo ""
+echo "[DDNS]"
+grep -E "CONFIG_PACKAGE_luci-app-ddns-go" .config || echo "  (未找到 ddns-go!)"
+
+echo ""
+echo "[文件共享]"
+grep -E "CONFIG_PACKAGE_samba4-server" .config || echo "  (未找到 samba4-server!)"
+grep -E "CONFIG_PACKAGE_luci-app-samba4" .config || echo "  (未找到 luci-app-samba4!)"
+grep -E "CONFIG_PACKAGE_kmod-fs-cifs" .config || echo "  (未找到 kmod-fs-cifs!)"
+
+echo ""
 echo "[主题]"
 grep -E "CONFIG_PACKAGE_luci-theme-argon" .config || echo "  (未找到 argon 主题!)"
 
@@ -256,7 +342,8 @@ grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config || echo "  (使用默认值)"
 echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成! .config 已生成"
-echo "  精简策略: 只移除无用插件和调试工具"
+echo "  精简策略: 移除无用插件/调试工具/IPv6用户态/zram"
 echo "  保留策略: 核心路由/WiFi/拨号/加速/基础库全保留"
-echo "  sirpdboy 软件包: 不编译, 日后通过 opkg 安装"
+echo "  内置插件: daed, EasyTier, ddns-go, samba4, cifs, argon主题"
+echo "  其他插件: 日后通过 opkg 按需安装"
 echo "============================================================"
