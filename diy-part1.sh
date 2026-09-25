@@ -117,6 +117,19 @@ else
 fi
 
 # ------------------------------------------------------------
+# 5. 添加 ddns-go (sirpdboy)
+# ------------------------------------------------------------
+echo ""
+echo "--- 5.1 添加 ddns-go (sirpdboy) ---"
+
+if [ -d "package/luci-app-ddns-go" ]; then
+    echo "  luci-app-ddns-go 已存在, 跳过"
+else
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-ddns-go.git package/luci-app-ddns-go
+    echo "  luci-app-ddns-go 已添加"
+fi
+
+# ------------------------------------------------------------
 # 完成
 # ------------------------------------------------------------
 echo ""
@@ -124,6 +137,6 @@ echo "============================================================"
 echo "  DIY Part 1 完成!"
 echo "  - DTS: 2GB 内存 + 无 NMBM + 506.5MB UBI"
 echo "  - 设备: netcore_n60-pro 已就绪"
-echo "  - 包: EasyTier, luci-theme-argon"
-echo "  - sirpdboy 软件包: 不编译进固件, 日后通过 opkg 安装"
+echo "  - 包: EasyTier, luci-theme-argon, ddns-go"
+echo "  - 其他 sirpdboy 软件: 不编译, 日后通过 opkg 安装"
 echo "============================================================"
