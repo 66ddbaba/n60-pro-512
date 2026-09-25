@@ -121,20 +121,39 @@ jobs:
           echo "=== 固件文件 ==="
           find bin/ -name "*n60*" -type f 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到固件"
 
-      # ===== 第10步: 重命名固件 =====
+      # ===== 第10步: 重命名固件 (只保留 sysupgrade.bin) =====
       - name: Rename firmware files
         if: success()
         run: |
           cd openwrt
 
-          # 获取版本号 (用 ^VERSION_NUMBER 避免匹配到 CONFIG_VERSION_NUMBER)
-          VERSION=$(grep -m1 '^VERSION_NUMBER' include/version.mk 2>/dev/null | sed 's/.*:=[[:space:]]*//' | tr -d '"' | tr -d ' ' | tr -d '\\')
-          VERSION=${VERSION:-24.10.0}
-          # 验证版本号格式 (应该是 x.y.z 格式)
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?'; then
-            echo "警告: 版本号提取异常 '$VERSION', 使用默认值 24.10.0"
+          # ========== 可靠提取版本号 (三重兜底) ==========
+          # 方法1: 从 include/version.mk 提取
+          VERSION=""
+          if [ -f include/version.mk ]; then
+            VERSION=$(awk -F':=' '/^[[:space:]]*VERSION_NUMBER[[:space:]]*:=[[:space:]]*/{
+              gsub(/[[:space:]"\r]/,"",$2);
+              print $2;
+              exit
+            }' include/version.mk)
+          fi
+
+          # 方法2: 从编译好的固件文件名中提取 (备用)
+          if [ -z "$VERSION" ] || ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+'; then
+            echo "方法1提取失败 '$VERSION', 尝试从固件文件名提取..."
+            FW_DIR="bin/targets/mediatek/filogic"
+            SAMPLE_FW=$(find ${FW_DIR} -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
+            if [ -n "$SAMPLE_FW" ]; then
+              VERSION=$(basename "$SAMPLE_FW" | sed -n 's/^immortalwrt-\([0-9.]*\)-.*/\1/p')
+            fi
+          fi
+
+          # 方法3: 默认值 (最后兜底)
+          if [ -z "$VERSION" ] || ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+'; then
+            echo "方法2也失败, 使用默认值 24.10.0"
             VERSION="24.10.0"
           fi
+
           DATE=$(date +%Y%m%d)
           TAG="v${VERSION}-${DATE}"
 
@@ -147,53 +166,24 @@ jobs:
           echo "RELEASE_DATE=${DATE}" >> $GITHUB_ENV
           echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
 
-          # 创建固件输出目录
+          # ========== 只保留 sysupgrade.bin ==========
           mkdir -p /tmp/firmware
 
-          # 查找并重命名固件文件
           FW_DIR="bin/targets/mediatek/filogic"
-
-          # sysupgrade.bin
           SYSUPGRADE=$(find ${FW_DIR} -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
+
           if [ -n "$SYSUPGRADE" ]; then
             NEW_NAME="immortalwrt-${VERSION}-${DATE}-mediatek-filogic-netcore_n60-pro-506.5MB-squashfs-sysupgrade.bin"
             cp "$SYSUPGRADE" "/tmp/firmware/${NEW_NAME}"
-            echo "重命名: ${NEW_NAME}"
+            echo "固件: ${NEW_NAME}"
+          else
+            echo "[错误] 未找到 sysupgrade.bin 固件!"
+            find ${FW_DIR} -name "*.bin" -type f 2>/dev/null
+            exit 1
           fi
 
-          # factory.bin
-          FACTORY=$(find ${FW_DIR} -name "*n60*squashfs-factory.bin" -type f 2>/dev/null | head -1)
-          if [ -n "$FACTORY" ]; then
-            NEW_NAME="immortalwrt-${VERSION}-${DATE}-mediatek-filogic-netcore_n60-pro-506.5MB-squashfs-factory.bin"
-            cp "$FACTORY" "/tmp/firmware/${NEW_NAME}"
-            echo "重命名: ${NEW_NAME}"
-          fi
-
-          # initramfs-kernel.bin
-          INITRAMFS=$(find ${FW_DIR} -name "*n60*initramfs-kernel.bin" -type f 2>/dev/null | head -1)
-          if [ -n "$INITRAMFS" ]; then
-            NEW_NAME="immortalwrt-${VERSION}-${DATE}-mediatek-filogic-netcore_n60-pro-506.5MB-initramfs-kernel.bin"
-            cp "$INITRAMFS" "/tmp/firmware/${NEW_NAME}"
-            echo "重命名: ${NEW_NAME}"
-          fi
-
-          echo "=== 最终固件列表 ==="
+          echo "=== 最终固件 ==="
           ls -lh /tmp/firmware/
-
-          # 生成版本信息文件
-          cat > /tmp/firmware/build-info.txt << EOF
-          ImmortalWrt ${VERSION} 编译信息
-          ================================
-          编译日期: ${DATE}
-          设备: 磊科 N60 Pro (硬改 512MB 闪存 + 2GB 内存)
-          布局: 506.5MB UBI (移除 NMBM)
-          源码: ${{ env.REPO_URL }} (${{ env.REPO_BRANCH }})
-          内核: Linux 6.6
-          代理: daed
-          组网: EasyTier
-          主题: luci-theme-argon
-          说明: 精简固件, 日后通过 opkg 安装额外软件
-          EOF
 
       # ===== 第11步: 创建 GitHub Release =====
       - name: Create Release
@@ -213,22 +203,19 @@ jobs:
             ### 软件配置
             - 代理: daed (eBPF)
             - 组网: EasyTier
+            - DDNS: ddns-go (sirpdboy)
+            - 文件共享: Samba4 + CIFS 挂载
             - 主题: luci-theme-argon
-            - 精简: 移除 ssr-plus/htop/nano/tcpdump 等无用插件
-            - 保留: WiFi/PPPoE/硬件NAT/防火墙/QoS 全部核心功能
+            - 精简: 移除 ssr-plus/调试工具/IPv6用户态/zram 等
 
             ### 固件说明
             - **sysupgrade.bin**: 升级用, 通过 U-Boot 或 sysupgrade 刷入
-            - **factory.bin**: 全新刷入用
-            - **initramfs-kernel.bin**: 临时测试用, 不写 Flash
 
             ### 刷入方法
             1. 断电 → 按住重置按钮 → 通电 → LED 慢闪后松手
             2. 浏览器访问 http://10.10.10.1
             3. 选择 506.5MB 分区表, 上传 sysupgrade.bin
-          files: |
-            /tmp/firmware/*.bin
-            /tmp/firmware/build-info.txt
+          files: /tmp/firmware/*.bin
           draft: false
           prerelease: false
 
