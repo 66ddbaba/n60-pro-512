@@ -119,34 +119,51 @@ jobs:
           cd openwrt
 
           echo "=== 开始编译 ==="
-          # 启用 pipefail: 管道中任何命令失败, 整体都算失败
-          set -o pipefail
+          # 关闭 errexit: 让 make 失败后能继续执行诊断步骤
+          set +e
 
-          # 编译, 同时保存完整日志
+          # 编译, 同时保存完整日志到 /tmp/build.log
           make -j$(nproc) V=w 2>&1 | tee /tmp/build.log | tail -300
-
           BUILD_EXIT=${PIPESTATUS[0]}
           echo "编译退出码: ${BUILD_EXIT}"
 
           if [ ${BUILD_EXIT} -ne 0 ]; then
             echo ""
-            echo "=== 编译失败时的磁盘空间 ==="
+            echo "=== 编译失败! 从完整日志中搜索错误 ==="
+            echo "--- error: 行 ---"
+            grep -in "error:" /tmp/build.log | tail -30 || true
+            echo ""
+            echo "--- make Error 行 ---"
+            grep -in "make\[.*Error" /tmp/build.log | tail -20 || true
+            echo ""
+            echo "--- Package missing ---"
+            grep -in "Package.*missing\|Package.*not found" /tmp/build.log | tail -10 || true
+            echo ""
+            echo "--- No rule to make ---"
+            grep -in "No rule to make" /tmp/build.log | tail -10 || true
+            echo ""
+            echo "--- cannot find / undefined ---"
+            grep -in "cannot find\|undefined reference\|fatal:" /tmp/build.log | tail -10 || true
+            echo ""
+
+            echo "=== 磁盘空间检查 ==="
             df -h /
             echo ""
-            echo "=== 尝试用单线程重编定位错误 ==="
-            echo "(多线程编译错误信息被冲散, 单线程能准确定位)"
-            echo ""
 
-            # 用 make -j1 V=s 单线程重新编译软件包, 准确定位错误
-            # 只编译 package/compile (toolchain和kernel已编好), 节省时间
-            make -j1 V=s package/compile 2>&1 | tee /tmp/build-error.log | tail -400
+            echo "=== 单线程重编定位错误 ==="
+            echo "(多线程错误被 warning 冲散, 单线程能准确定位)"
+            make -j1 V=s package/compile 2>&1 | tee /tmp/build-error.log | tail -500
 
             echo ""
-            echo "=== 错误关键词搜索 ==="
-            grep -i "error:" /tmp/build-error.log | tail -20 || true
-            grep -i "make.*Error" /tmp/build-error.log | tail -10 || true
-            grep -i "Package.*missing" /tmp/build-error.log | tail -10 || true
-            grep -i "No rule to make" /tmp/build-error.log | tail -10 || true
+            echo "=== 单线程诊断: 错误搜索 ==="
+            echo "--- error: 行 ---"
+            grep -in "error:" /tmp/build-error.log | tail -30 || true
+            echo ""
+            echo "--- make Error 行 ---"
+            grep -in "make\[.*Error" /tmp/build-error.log | tail -20 || true
+            echo ""
+            echo "--- 编译失败的最后 50 行 ---"
+            tail -50 /tmp/build-error.log
 
             exit ${BUILD_EXIT}
           fi
