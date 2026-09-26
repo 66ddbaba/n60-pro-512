@@ -117,10 +117,101 @@ else
 fi
 
 # ------------------------------------------------------------
-# 5. 添加 ddns-go (sirpdboy)
+# 5. 添加 ddns-go (主程序 + LuCI 界面)
 # ------------------------------------------------------------
 echo ""
-echo "--- 5.1 添加 ddns-go (sirpdboy) ---"
+echo "--- 5.1 添加 ddns-go 主程序包 ---"
+
+DDNS_GO_VER="v6.7.2"
+
+if [ -d "package/ddns-go" ]; then
+    echo "  ddns-go 已存在, 跳过"
+else
+    mkdir -p package/ddns-go/files
+
+    # 创建 Makefile (下载预编译的 arm64 二进制)
+    cat > package/ddns-go/Makefile << 'DDNS_GO_MK'
+include $(TOPDIR)/rules.mk
+
+PKG_NAME:=ddns-go
+PKG_VERSION:=v6.7.2
+PKG_RELEASE:=1
+
+PKG_SOURCE:=$(PKG_NAME)_$(PKG_VERSION)_linux_arm64.tar.gz
+PKG_SOURCE_URL:=https://github.com/jeessy2/ddns-go/releases/download/$(PKG_VERSION)/
+PKG_HASH:=skip
+
+include $(INCLUDE_DIR)/package.mk
+
+define Package/$(PKG_NAME)
+  SECTION:=net
+  CATEGORY:=Network
+  SUBMENU:=DDNS
+  TITLE:=Simple and easy-to-use DDNS tool
+  URL:=https://github.com/jeessy2/ddns-go
+  DEPENDS:=+ca-bundle
+endef
+
+define Package/$(PKG_NAME)/description
+  Simple and easy-to-use DDNS tool, automatically obtains public IP and resolves to domain name.
+  Supports Alibaba Cloud DNSPod, Tencent Cloud DNSPod, Cloudflare and more than 50 service providers.
+endef
+
+define Build/Prepare
+  mkdir -p $(PKG_BUILD_DIR)
+  tar -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR)
+endef
+
+define Build/Compile
+  # 预编译二进制, 无需编译
+endef
+
+define Package/$(PKG_NAME)/install
+  $(INSTALL_DIR) $(1)/usr/bin
+  $(INSTALL_BIN) $(PKG_BUILD_DIR)/ddns-go $(1)/usr/bin/ddns-go
+
+  $(INSTALL_DIR) $(1)/etc/init.d
+  $(INSTALL_BIN) ./files/ddns-go.init $(1)/etc/init.d/ddns-go
+
+  $(INSTALL_DIR) $(1)/etc/config
+  $(INSTALL_DATA) ./files/ddns-go.config $(1)/etc/config/ddns-go
+endef
+
+$(eval $(call BuildPackage,$(PKG_NAME)))
+DDNS_GO_MK
+
+    # 创建 init 启动脚本
+    cat > package/ddns-go/files/ddns-go.init << 'INIT_EOF'
+#!/bin/sh /etc/rc.common
+START=99
+STOP=10
+
+USE_PROCD=1
+PROG=/usr/bin/ddns-go
+
+start_service() {
+    procd_open_instance
+    procd_set_param command $PROG -l :9876 -f 300
+    procd_set_param respawn
+    procd_set_param stdout 1
+    procd_set_param stderr 1
+    procd_close_instance
+}
+INIT_EOF
+    chmod +x package/ddns-go/files/ddns-go.init
+
+    # 创建配置文件
+    cat > package/ddns-go/files/ddns-go.config << 'CFG_EOF'
+config ddns-go 'config'
+    option enabled '0'
+    option port '9876'
+CFG_EOF
+
+    echo "  ddns-go 主程序包已创建 (预编译 arm64 二进制)"
+fi
+
+echo ""
+echo "--- 5.2 添加 luci-app-ddns-go (sirpdboy) ---"
 
 if [ -d "package/luci-app-ddns-go" ]; then
     echo "  luci-app-ddns-go 已存在, 跳过"
@@ -137,6 +228,6 @@ echo "============================================================"
 echo "  DIY Part 1 完成!"
 echo "  - DTS: 2GB 内存 + 无 NMBM + 506.5MB UBI"
 echo "  - 设备: netcore_n60-pro 已就绪"
-echo "  - 包: EasyTier, luci-theme-argon, ddns-go"
+echo "  - 包: EasyTier, luci-theme-argon, ddns-go(主程序+LuCI)"
 echo "  - 其他 sirpdboy 软件: 不编译, 日后通过 opkg 安装"
 echo "============================================================"
