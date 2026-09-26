@@ -228,7 +228,8 @@ echo "--- 1.8 添加 ddns-go (主程序+LuCI) ---"
 cat >> .config << 'EOF'
 
 # ===== ddns-go 动态域名 =====
-CONFIG_PACKAGE_ddns-go=y
+# 主程序二进制在 files/usr/bin/ddns-go (diy-part1.sh 下载)
+# 这里只启用 LuCI 管理界面
 CONFIG_PACKAGE_luci-app-ddns-go=y
 EOF
 echo "  ddns-go 已添加 (主程序 + LuCI 界面)"
@@ -309,8 +310,8 @@ grep -E "CONFIG_PACKAGE_easytier|CONFIG_PACKAGE_luci-app-easytier" .config || ec
 
 echo ""
 echo "[DDNS]"
-grep -E "CONFIG_PACKAGE_ddns-go=y" .config || echo "  (未找到 ddns-go!)"
 grep -E "CONFIG_PACKAGE_luci-app-ddns-go=y" .config || echo "  (未找到 luci-app-ddns-go!)"
+ls -lh files/usr/bin/ddns-go 2>/dev/null && echo "  ddns-go 二进制已在 files/ 中" || echo "  (警告: ddns-go 二进制不存在!)"
 
 echo ""
 echo "[文件共享]"
