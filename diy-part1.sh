@@ -119,45 +119,37 @@ fi
 # ------------------------------------------------------------
 # 5. 添加 ddns-go (主程序 + LuCI 界面)
 # ------------------------------------------------------------
-# sirpdboy 的 luci-app-ddns-go 仓库自带了 ddns-go 源码编译子包,
-# 它尝试从 Go 源码交叉编译, 但 GitHub Actions 环境不支持, 会失败.
-# 解决方案: 克隆后替换 ddns-go/Makefile 为预编译二进制下载版本.
+# 方案: 主程序二进制直接放到 files/ 目录 (绕过包编译系统, 最可靠)
+#       LuCI 界面从 sirpdboy 克隆, 修改 Makefile 移除对 ddns-go 包的依赖
 # ------------------------------------------------------------
 echo ""
-echo "--- 5.1 克隆 luci-app-ddns-go (含 ddns-go 子包) ---"
+echo "--- 5.1 下载 ddns-go 预编译二进制到 files/ 目录 ---"
 
-if [ -d "package/luci-app-ddns-go" ]; then
-    echo "  luci-app-ddns-go 已存在, 跳过克隆"
+DDNS_GO_VER="v6.7.2"
+DDNS_GO_FILE="ddns-go_${DDNS_GO_VER}_linux_arm64.tar.gz"
+DDNS_GO_URL="https://github.com/jeessy2/ddns-go/releases/download/${DDNS_GO_VER}/${DDNS_GO_FILE}"
+
+mkdir -p files/usr/bin files/etc/init.d files/etc/config
+
+if [ -f "files/usr/bin/ddns-go" ]; then
+    echo "  ddns-go 二进制已存在, 跳过下载"
 else
-    git clone --depth 1 https://github.com/sirpdboy/luci-app-ddns-go.git package/luci-app-ddns-go
-    echo "  luci-app-ddns-go 已添加"
+    echo "  正在下载 ddns-go ${DDNS_GO_VER} ..."
+    curl -fSL --connect-timeout 30 --retry 3 -o "/tmp/${DDNS_GO_FILE}" "${DDNS_GO_URL}"
+    if [ $? -eq 0 ] && [ -f "/tmp/${DDNS_GO_FILE}" ]; then
+        tar -xzf "/tmp/${DDNS_GO_FILE}" -C /tmp/
+        cp "/tmp/ddns-go" files/usr/bin/ddns-go
+        chmod +x files/usr/bin/ddns-go
+        echo "  ddns-go 已放入 files/usr/bin/ddns-go"
+        rm -f "/tmp/${DDNS_GO_FILE}" "/tmp/ddns-go" "/tmp/README.md" "/tmp/LICENSE" 2>/dev/null
+    else
+        echo "  [警告] ddns-go 下载失败, 固件将不包含 ddns-go 主程序"
+    fi
 fi
 
-echo ""
-echo "--- 5.2 替换 ddns-go Makefile (预编译二进制, 不从源码编译) ---"
-
-DDNS_GO_SUBDIR="package/luci-app-ddns-go/ddns-go"
-
-if [ -d "$DDNS_GO_SUBDIR" ]; then
-    # 备份原 Makefile
-    cp "$DDNS_GO_SUBDIR/Makefile" "$DDNS_GO_SUBDIR/Makefile.orig" 2>/dev/null || true
-
-    # 获取原 Makefile 中的版本号, 确保带 v 前缀
-    OLD_VER=$(grep -m1 'PKG_VERSION' "$DDNS_GO_SUBDIR/Makefile" 2>/dev/null | sed 's/.*:=\s*//' | tr -d ' \r\n"')
-    if [ -z "$OLD_VER" ]; then
-        OLD_VER="v6.7.2"
-    fi
-    # 确保版本号以 v 开头 (官方 Releases URL 需要 v 前缀, 如 v6.17.1)
-    case "$OLD_VER" in
-        v*) ;;
-        *) OLD_VER="v${OLD_VER}" ;;
-    esac
-    echo "  版本号: $OLD_VER (已确保 v 前缀)"
-
-    # 确保有 init 脚本
-    mkdir -p "$DDNS_GO_SUBDIR/files"
-    if [ ! -f "$DDNS_GO_SUBDIR/files/ddns-go.init" ]; then
-        cat > "$DDNS_GO_SUBDIR/files/ddns-go.init" << 'INIT_EOF'
+# 创建 init 启动脚本
+if [ ! -f "files/etc/init.d/ddns-go" ]; then
+    cat > files/etc/init.d/ddns-go << 'INIT_EOF'
 #!/bin/sh /etc/rc.common
 START=99
 STOP=10
@@ -173,128 +165,39 @@ start_service() {
     procd_close_instance
 }
 INIT_EOF
-        chmod +x "$DDNS_GO_SUBDIR/files/ddns-go.init"
-        echo "  创建了 init 脚本"
-    fi
+    chmod +x files/etc/init.d/ddns-go
+    echo "  init 脚本已创建"
+fi
 
-    # 用预编译二进制版本替换 Makefile (引号 heredoc, 全部字面量)
-    cat > "$DDNS_GO_SUBDIR/Makefile" << 'DDNS_GO_MK'
-include $(TOPDIR)/rules.mk
+echo ""
+echo "--- 5.2 克隆 luci-app-ddns-go (仅界面) ---"
 
-PKG_NAME:=ddns-go
-PKG_VERSION:=__DDNSGO_VER__
-PKG_RELEASE:=1
-
-PKG_SOURCE:=$(PKG_NAME)_$(PKG_VERSION)_linux_arm64.tar.gz
-PKG_SOURCE_URL:=https://github.com/jeessy2/ddns-go/releases/download/$(PKG_VERSION)/
-PKG_HASH:=skip
-
-include $(INCLUDE_DIR)/package.mk
-
-define Package/$(PKG_NAME)
-  SECTION:=net
-  CATEGORY:=Network
-  SUBMENU:=DDNS
-  TITLE:=Simple and easy-to-use DDNS tool
-  URL:=https://github.com/jeessy2/ddns-go
-  DEPENDS:=+ca-bundle
-endef
-
-define Package/$(PKG_NAME)/description
-  Simple and easy-to-use DDNS tool.
-  Supports Alibaba Cloud, Tencent Cloud, Cloudflare and 50+ providers.
-endef
-
-define Build/Prepare
-  mkdir -p $(PKG_BUILD_DIR)
-  tar -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR)
-endef
-
-define Build/Compile
-endef
-
-define Package/$(PKG_NAME)/install
-  $(INSTALL_DIR) $(1)/usr/bin
-  $(INSTALL_BIN) $(PKG_BUILD_DIR)/ddns-go $(1)/usr/bin/ddns-go
-  $(INSTALL_DIR) $(1)/etc/init.d
-  $(INSTALL_BIN) ./files/ddns-go.init $(1)/etc/init.d/ddns-go
-endef
-
-$(eval $(call BuildPackage,$(PKG_NAME)))
-DDNS_GO_MK
-
-    # 替换版本号占位符
-    sed -i "s/__DDNSGO_VER__/${OLD_VER}/" "$DDNS_GO_SUBDIR/Makefile"
-
-    echo "  ddns-go Makefile 已替换为预编译二进制下载版本"
-    echo "  版本: ${OLD_VER}"
+if [ -d "package/luci-app-ddns-go" ]; then
+    echo "  luci-app-ddns-go 已存在, 跳过克隆"
 else
-    echo "  [警告] ddns-go 子目录不存在, sirpdboy 仓库结构可能已变化"
-    echo "  将创建独立的 ddns-go 包..."
+    git clone --depth 1 https://github.com/sirpdboy/luci-app-ddns-go.git package/luci-app-ddns-go
+    echo "  luci-app-ddns-go 已添加"
+fi
 
-    mkdir -p package/ddns-go/files
-    cat > package/ddns-go/Makefile << 'FALLBACK_MK'
-include $(TOPDIR)/rules.mk
+echo ""
+echo "--- 5.3 修改 luci-app-ddns-go: 移除 ddns-go 依赖 + 删除 ddns-go 子包 ---"
 
-PKG_NAME:=ddns-go
-PKG_VERSION:=v6.7.2
-PKG_RELEASE:=1
+# 删除 ddns-go 子包 (它会尝试从源码编译, 我们已经在 files/ 里放了二进制)
+if [ -d "package/luci-app-ddns-go/ddns-go" ]; then
+    rm -rf "package/luci-app-ddns-go/ddns-go"
+    echo "  已删除 ddns-go 子包 (主程序已在 files/ 中)"
+fi
 
-PKG_SOURCE:=$(PKG_NAME)_$(PKG_VERSION)_linux_arm64.tar.gz
-PKG_SOURCE_URL:=https://github.com/jeessy2/ddns-go/releases/download/$(PKG_VERSION)/
-PKG_HASH:=skip
-
-include $(INCLUDE_DIR)/package.mk
-
-define Package/$(PKG_NAME)
-  SECTION:=net
-  CATEGORY:=Network
-  SUBMENU:=DDNS
-  TITLE:=Simple and easy-to-use DDNS tool
-  URL:=https://github.com/jeessy2/ddns-go
-  DEPENDS:=+ca-bundle
-endef
-
-define Package/$(PKG_NAME)/description
-  Simple and easy-to-use DDNS tool.
-endef
-
-define Build/Prepare
-  mkdir -p $(PKG_BUILD_DIR)
-  tar -xzf $(DL_DIR)/$(PKG_SOURCE) -C $(PKG_BUILD_DIR)
-endef
-
-define Build/Compile
-endef
-
-define Package/$(PKG_NAME)/install
-  $(INSTALL_DIR) $(1)/usr/bin
-  $(INSTALL_BIN) $(PKG_BUILD_DIR)/ddns-go $(1)/usr/bin/ddns-go
-  $(INSTALL_DIR) $(1)/etc/init.d
-  $(INSTALL_BIN) ./files/ddns-go.init $(1)/etc/init.d/ddns-go
-endef
-
-$(eval $(call BuildPackage,$(PKG_NAME)))
-FALLBACK_MK
-
-    cat > package/ddns-go/files/ddns-go.init << 'INIT_FALLBACK'
-#!/bin/sh /etc/rc.common
-START=99
-STOP=10
-USE_PROCD=1
-PROG=/usr/bin/ddns-go
-
-start_service() {
-    procd_open_instance
-    procd_set_param command $PROG -l :9876 -f 300
-    procd_set_param respawn
-    procd_set_param stdout 1
-    procd_set_param stderr 1
-    procd_close_instance
-}
-INIT_FALLBACK
-    chmod +x package/ddns-go/files/ddns-go.init
-    echo "  独立 ddns-go 包已创建 (备用方案)"
+# 修改 luci-app-ddns-go 的 Makefile, 移除对 ddns-go 包的依赖
+LUCI_DDNS_MAKEFILE="package/luci-app-ddns-go/Makefile"
+if [ -f "$LUCI_DDNS_MAKEFILE" ]; then
+    # 移除 DEPENDS 中的 +ddns-go
+    sed -i 's/+ddns-go//g' "$LUCI_DDNS_MAKEFILE"
+    # 清理多余空格
+    sed -i 's/DEPENDS:= /DEPENDS:=/' "$LUCI_DDNS_MAKEFILE"
+    sed -i 's/  */ /g' "$LUCI_DDNS_MAKEFILE"
+    echo "  已移除 luci-app-ddns-go 对 ddns-go 包的依赖"
+    grep 'DEPENDS' "$LUCI_DDNS_MAKEFILE" | head -1
 fi
 
 # ------------------------------------------------------------
