@@ -142,12 +142,17 @@ if [ -d "$DDNS_GO_SUBDIR" ]; then
     # 备份原 Makefile
     cp "$DDNS_GO_SUBDIR/Makefile" "$DDNS_GO_SUBDIR/Makefile.orig" 2>/dev/null || true
 
-    # 获取原 Makefile 中的版本号
+    # 获取原 Makefile 中的版本号, 确保带 v 前缀
     OLD_VER=$(grep -m1 'PKG_VERSION' "$DDNS_GO_SUBDIR/Makefile" 2>/dev/null | sed 's/.*:=\s*//' | tr -d ' \r\n"')
     if [ -z "$OLD_VER" ]; then
         OLD_VER="v6.7.2"
     fi
-    echo "  原 Makefile 版本: $OLD_VER"
+    # 确保版本号以 v 开头 (官方 Releases URL 需要 v 前缀, 如 v6.17.1)
+    case "$OLD_VER" in
+        v*) ;;
+        *) OLD_VER="v${OLD_VER}" ;;
+    esac
+    echo "  版本号: $OLD_VER (已确保 v 前缀)"
 
     # 确保有 init 脚本
     mkdir -p "$DDNS_GO_SUBDIR/files"
