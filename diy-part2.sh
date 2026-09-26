@@ -221,16 +221,17 @@ EOF
 echo "  EasyTier 已添加"
 
 # ------------------------------------------------------------
-# 8. 添加 ddns-go (sirpdboy)
+# 8. 添加 ddns-go (主程序 + LuCI 界面)
 # ------------------------------------------------------------
 echo ""
-echo "--- 1.8 添加 ddns-go ---"
+echo "--- 1.8 添加 ddns-go (主程序+LuCI) ---"
 cat >> .config << 'EOF'
 
-# ===== ddns-go 动态域名 (sirpdboy) =====
+# ===== ddns-go 动态域名 =====
+CONFIG_PACKAGE_ddns-go=y
 CONFIG_PACKAGE_luci-app-ddns-go=y
 EOF
-echo "  ddns-go 已添加"
+echo "  ddns-go 已添加 (主程序 + LuCI 界面)"
 
 # ------------------------------------------------------------
 # 8.5 添加文件共享 (Samba + CIFS 挂载)
@@ -308,7 +309,8 @@ grep -E "CONFIG_PACKAGE_easytier|CONFIG_PACKAGE_luci-app-easytier" .config || ec
 
 echo ""
 echo "[DDNS]"
-grep -E "CONFIG_PACKAGE_luci-app-ddns-go" .config || echo "  (未找到 ddns-go!)"
+grep -E "CONFIG_PACKAGE_ddns-go=y" .config || echo "  (未找到 ddns-go!)"
+grep -E "CONFIG_PACKAGE_luci-app-ddns-go=y" .config || echo "  (未找到 luci-app-ddns-go!)"
 
 echo ""
 echo "[文件共享]"
