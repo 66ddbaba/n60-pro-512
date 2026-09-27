@@ -125,8 +125,25 @@ fi
 echo ""
 echo "--- 5.1 下载 ddns-go 预编译二进制到 files/ 目录 ---"
 
-DDNS_GO_VER="v6.7.2"
-DDNS_GO_FILE="ddns-go_${DDNS_GO_VER}_linux_arm64.tar.gz"
+# 自动获取最新版本号 (从 GitHub API)
+# ddns-go 文件名格式: ddns-go_6.17.7_linux_arm64.tar.gz (文件名里不带 v)
+# URL 路径格式: /download/v6.17.7/ (路径里带 v)
+DDNS_GO_VER=""
+LATEST_JSON=$(curl -fsSL --connect-timeout 15 "https://api.github.com/repos/jeessy2/ddns-go/releases/latest" 2>/dev/null) || true
+if [ -n "$LATEST_JSON" ]; then
+    DDNS_GO_VER=$(echo "$LATEST_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name":\s*"\([^"]*\)".*/\1/' | tr -d ' ')
+fi
+
+# 如果 API 获取失败, 使用默认版本兜底
+if [ -z "$DDNS_GO_VER" ]; then
+    DDNS_GO_VER="v6.17.7"
+    echo "  无法获取最新版本, 使用默认: $DDNS_GO_VER"
+else
+    echo "  最新版本: $DDNS_GO_VER"
+fi
+
+DDNS_GO_VER_NO_V="${DDNS_GO_VER#v}"  # 去掉 v 前缀
+DDNS_GO_FILE="ddns-go_${DDNS_GO_VER_NO_V}_linux_arm64.tar.gz"
 DDNS_GO_URL="https://github.com/jeessy2/ddns-go/releases/download/${DDNS_GO_VER}/${DDNS_GO_FILE}"
 
 mkdir -p files/usr/bin files/etc/init.d files/etc/config
@@ -135,15 +152,22 @@ if [ -f "files/usr/bin/ddns-go" ]; then
     echo "  ddns-go 二进制已存在, 跳过下载"
 else
     echo "  正在下载 ddns-go ${DDNS_GO_VER} ..."
-    curl -fSL --connect-timeout 30 --retry 3 -o "/tmp/${DDNS_GO_FILE}" "${DDNS_GO_URL}"
-    if [ $? -eq 0 ] && [ -f "/tmp/${DDNS_GO_FILE}" ]; then
-        tar -xzf "/tmp/${DDNS_GO_FILE}" -C /tmp/
-        cp "/tmp/ddns-go" files/usr/bin/ddns-go
-        chmod +x files/usr/bin/ddns-go
-        echo "  ddns-go 已放入 files/usr/bin/ddns-go"
+    echo "  URL: ${DDNS_GO_URL}"
+    curl -fSL --connect-timeout 30 --retry 3 -o "/tmp/${DDNS_GO_FILE}" "${DDNS_GO_URL}" || true
+    if [ -f "/tmp/${DDNS_GO_FILE}" ] && [ -s "/tmp/${DDNS_GO_FILE}" ]; then
+        tar -xzf "/tmp/${DDNS_GO_FILE}" -C /tmp/ 2>/dev/null
+        if [ -f "/tmp/ddns-go" ]; then
+            cp "/tmp/ddns-go" files/usr/bin/ddns-go
+            chmod +x files/usr/bin/ddns-go
+            echo "  ddns-go 已放入 files/usr/bin/ddns-go"
+            file files/usr/bin/ddns-go | head -1
+        else
+            echo "  [警告] 解压后未找到 ddns-go 二进制"
+        fi
         rm -f "/tmp/${DDNS_GO_FILE}" "/tmp/ddns-go" "/tmp/README.md" "/tmp/LICENSE" 2>/dev/null
     else
         echo "  [警告] ddns-go 下载失败, 固件将不包含 ddns-go 主程序"
+        echo "  (不影响其他功能, 编译继续)"
     fi
 fi
 
