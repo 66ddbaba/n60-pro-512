@@ -6,6 +6,8 @@
 #   2. 检查/添加 netcore_n60-pro 设备定义到 filogic.mk
 #   3. 添加 EasyTier 软件包
 #   4. 添加 luci-theme-argon 主题 (含配置工具)
+#   5. 下载 ddns-go 预编译二进制到 files/ 目录
+#   6. 克隆 luci-app-ddns-go (仅界面, 移除 ddns-go 子包和依赖)
 # ============================================================================
 set -e
 
@@ -21,7 +23,6 @@ DTS_FILE="target/linux/mediatek/dts/mt7986a-netcore-n60-pro.dts"
 
 if [ ! -f "$DTS_FILE" ]; then
     echo "[错误] DTS 文件不存在: $DTS_FILE"
-    echo "请检查源码是否正确克隆"
     exit 1
 fi
 
@@ -215,9 +216,7 @@ fi
 # 修改 luci-app-ddns-go 的 Makefile, 移除对 ddns-go 包的依赖
 LUCI_DDNS_MAKEFILE="package/luci-app-ddns-go/Makefile"
 if [ -f "$LUCI_DDNS_MAKEFILE" ]; then
-    # 移除 DEPENDS 中的 +ddns-go
     sed -i 's/+ddns-go//g' "$LUCI_DDNS_MAKEFILE"
-    # 清理多余空格
     sed -i 's/DEPENDS:= /DEPENDS:=/' "$LUCI_DDNS_MAKEFILE"
     sed -i 's/  */ /g' "$LUCI_DDNS_MAKEFILE"
     echo "  已移除 luci-app-ddns-go 对 ddns-go 包的依赖"
