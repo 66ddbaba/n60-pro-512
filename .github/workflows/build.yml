@@ -1,8 +1,12 @@
 # ============================================================================
-# ImmortalWrt GitHub Actions 云编译工作流
-# 设备: 磊科 N60 Pro (512MB 闪存 + 2GB 内存 硬改版)
-# 布局: 506.5MB UBI (移除 NMBM)
-# 源码: padavanonly/immortalwrt-mt798x-6.6
+#  ImmortalWrt GitHub Actions 云编译工作流
+#
+#  设备: 磊科 N60 Pro (512MB 闪存 + 2GB 内存 硬改版)
+#  布局: 506.5MB UBI (移除 NMBM)
+#  源码: padavanonly/immortalwrt-mt798x-6.6
+#
+#  触发: 纯手动 (workflow_dispatch)
+#  输出: GitHub Release (保留最近 3 个) + Artifacts 备份
 # ============================================================================
 name: Build N60 Pro 512M Firmware
 
@@ -12,7 +16,6 @@ on:
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
   REPO_BRANCH: openwrt-24.10-6.6
-  BASE_CONFIG: defconfig/mt7986-ax6000.config
   TZ: Asia/Shanghai
 
 permissions:
@@ -25,222 +28,214 @@ jobs:
     timeout-minutes: 360
 
     steps:
-      # ===== 第1步: 检出本仓库 =====
+      # ============================================================
+      # 1. 检出本仓库 (获取 diy 脚本)
+      # ============================================================
       - name: Checkout
         uses: actions/checkout@v5
 
-      # ===== 第2步: 释放磁盘空间 =====
+      # ============================================================
+      # 2. 释放磁盘空间 (删 Android SDK / dotnet 等预装垃圾)
+      # ============================================================
       - name: Free disk space
         run: |
-          echo "=== 释放磁盘空间 ==="
-          echo "清理前:"
-          df -h /
+          echo "=== 清理前 ===" && df -h /
 
-          sudo rm -rf /usr/local/lib/android
-          sudo rm -rf /usr/share/dotnet
-          sudo rm -rf /opt/ghc
-          sudo rm -rf /usr/local/share/boost
-          sudo rm -rf /usr/share/swift
-          sudo rm -rf /opt/google
-          sudo rm -rf /opt/az
-          sudo rm -rf /opt/hostedtoolcache/go
-          sudo rm -rf /opt/hostedtoolcache/Ruby
-          sudo rm -rf /opt/hostedtoolcache/PyPy
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
+          sudo rm -rf /usr/local/share/boost /usr/share/swift
+          sudo rm -rf /opt/google /opt/az /opt/microsoft/powershell
+          sudo rm -rf /opt/hostedtoolcache/go /opt/hostedtoolcache/Ruby
+          sudo rm -rf /opt/hostedtoolcache/PyPy /opt/hostedtoolcache/CodeQL
+          sudo rm -rf /opt/hostedtoolcache/julia /opt/hostedtoolcache/Kotlin
           sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name "3.*" -exec rm -rf {} + 2>/dev/null || true
-          sudo rm -rf /opt/microsoft/powershell
-          sudo rm -rf /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /opt/hostedtoolcache/julia
-          sudo rm -rf /opt/hostedtoolcache/Kotlin
           docker system prune -af --volumes 2>/dev/null || true
-          sudo apt-get clean
-          sudo apt-get autoremove -y
-          sudo rm -rf /tmp/*
-          sudo rm -rf /var/log/*
+          sudo apt-get clean && sudo apt-get autoremove -y
+          sudo rm -rf /tmp/* /var/log/*
 
-          echo "清理后:"
-          df -h /
+          echo "=== 清理后 ===" && df -h /
 
-      # ===== 第3步: 安装编译依赖 =====
-      - name: Install build dependencies
+      # ============================================================
+      # 3. 安装编译依赖
+      # ============================================================
+      - name: Install dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison build-essential \
-            bzip2 ccache clang cmake cpio curl device-tree-compiler ecj fastjar flex gawk \
-            gettext gcc-multilib g++-multilib git gperf haveged help2man intltool \
-            lib32gcc-s1 libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
-            libtool libyaml-dev libz-dev lld llvm lrzsz mkisofs msmtp nano ninja-build \
-            p7zip p7zip-full patch pkgconf python3 python3-pip python3-ply python3-docutils \
-            python3-pyelftools qemu-utils re2c rsync scons subversion swig texinfo uglifyjs \
-            upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
+            build-essential bzip2 ccache clang cmake cpio curl \
+            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
+            g++-multilib git gperf haveged help2man intltool lib32gcc-s1 \
+            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
+            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
+            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
+            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch \
+            pkgconf python3 python3-pip python3-ply python3-docutils \
+            python3-pyelftools qemu-utils re2c rsync scons subversion swig \
+            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
-      # ===== 第4步: 克隆源码 =====
-      - name: Clone source code
+      # ============================================================
+      # 4. 克隆 ImmortalWrt 源码
+      # ============================================================
+      - name: Clone source
         run: |
           git clone --depth 1 --single-branch -b ${{ env.REPO_BRANCH }} ${{ env.REPO_URL }} openwrt
           cd openwrt
-          git log -1 --format="最新提交: %H%n作者: %an%n日期: %ad%n信息: %s"
+          git log -1 --format="提交: %H%n作者: %an%n日期: %ad%n信息: %s"
 
-      # ===== 第5步: DIY 脚本 (修改源码) =====
-      - name: Run DIY script (source modifications)
+      # ============================================================
+      # 5. DIY Part 1 - 修改源码 (DTS / 设备定义 / 克隆包)
+      # ============================================================
+      - name: Run DIY Part 1 (source modifications)
         run: |
           cd openwrt
-          chmod +x $GITHUB_WORKSPACE/diy-part1.sh
           bash $GITHUB_WORKSPACE/diy-part1.sh
 
-      # ===== 第6步: 更新和安装 feeds =====
+      # ============================================================
+      # 6. 更新和安装 feeds
+      # ============================================================
       - name: Update & install feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      # ===== 第7步: 生成 .config =====
-      - name: Generate .config
+      # ============================================================
+      # 7. DIY Part 2 - 生成 .config (精简 + 添加包)
+      # ============================================================
+      - name: Run DIY Part 2 (generate .config)
         run: |
           cd openwrt
-          chmod +x $GITHUB_WORKSPACE/diy-part2.sh
           bash $GITHUB_WORKSPACE/diy-part2.sh
 
-      # ===== 第8步: 下载源码包 =====
+      # ============================================================
+      # 8. 下载源码包 (先下载好, 编译时不用等)
+      # ============================================================
       - name: Download sources
         run: |
           cd openwrt
-          make download -j$(nproc) V=w 2>&1 | tail -30
+          make download -j$(nproc) V=w 2>&1 | tail -20
 
-      # ===== 第9步: 编译固件 =====
+      # ============================================================
+      # 9. 编译固件
+      #    - 多线程编译, 失败时自动单线程重编定位错误
+      #    - 完整日志保存在 /tmp/build.log
+      # ============================================================
       - name: Build firmware
         id: Build
         run: |
           cd openwrt
 
           echo "=== 开始编译 ==="
-          set +e
+          set +e  # 关闭 errexit, 失败后继续执行诊断
 
+          # 多线程编译, 同时保存完整日志
           make -j$(nproc) V=w 2>&1 | tee /tmp/build.log | tail -300
           BUILD_EXIT=${PIPESTATUS[0]}
-          echo "编译退出码: ${BUILD_EXIT}"
+          echo "退出码: ${BUILD_EXIT}"
 
+          # 失败时: 搜错误 + 单线程重编定位
           if [ ${BUILD_EXIT} -ne 0 ]; then
             echo ""
-            echo "=== 编译失败! 从日志中搜索错误 ==="
-            echo "--- error: ---"
-            grep -in "error:" /tmp/build.log | tail -30 || true
+            echo "=== 编译失败! 搜索错误 ==="
+            for kw in "error:" "make\[.*Error" "Package.*missing" "cannot find" "undefined reference" "fatal:"; do
+              echo "--- $kw ---"
+              grep -in "$kw" /tmp/build.log | tail -15 || true
+            done
             echo ""
-            echo "--- make Error ---"
-            grep -in "make\[.*Error" /tmp/build.log | tail -20 || true
+            echo "=== 磁盘空间 ===" && df -h /
             echo ""
-            echo "--- Package missing ---"
-            grep -in "Package.*missing\|Package.*not found" /tmp/build.log | tail -10 || true
-            echo ""
-            echo "--- cannot find / undefined ---"
-            grep -in "cannot find\|undefined reference\|fatal:" /tmp/build.log | tail -10 || true
-            echo ""
-            echo "=== 磁盘空间 ==="
-            df -h /
-            echo ""
-            echo "=== 单线程重编定位 ==="
+            echo "=== 单线程重编定位 (只编 package) ==="
             make -j1 V=s package/compile 2>&1 | tee /tmp/build-error.log | tail -500
             echo ""
-            echo "=== 单线程错误搜索 ==="
-            grep -in "error:" /tmp/build-error.log | tail -30 || true
+            echo "=== 单线程错误汇总 ==="
+            grep -in "error:" /tmp/build-error.log | tail -20 || true
             echo ""
-            tail -50 /tmp/build-error.log
-
+            echo "=== 最后 30 行 ==="
+            tail -30 /tmp/build-error.log
             exit ${BUILD_EXIT}
           fi
 
           echo ""
-          echo "=== 编译成功! ==="
-          find bin/ -name "*n60*" -type f 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到固件"
-          echo ""
-          find bin/ -name "*.bin" -type f 2>/dev/null | head -20
+          echo "=== 编译成功! 固件文件 ==="
+          find bin/ -name "*n60*" -type f 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到"
 
-      # ===== 第10步: 重命名固件 =====
-      - name: Rename firmware files
+      # ============================================================
+      # 10. 提取版本号 + 重命名固件
+      #     只保留 sysupgrade.bin, 去掉 medatek-filogic
+      # ============================================================
+      - name: Rename firmware
         if: success()
         run: |
           cd openwrt
-
-          # ========== 提取版本号 ==========
-          VERSION=""
           FW_DIR="bin/targets/mediatek/filogic"
+          VERSION=""
 
           echo "=== 提取版本号 ==="
 
+          # 有效版本格式: 24.10.0 / 24.10-SNAPSHOT / 24.10
+          is_valid_version() {
+              echo "$1" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9]+)?$'
+          }
+
           # 方法1: 从 .config 提取 CONFIG_VERSION_NUMBER
           if [ -f .config ]; then
-            RAW_VER=$(grep -m1 '^CONFIG_VERSION_NUMBER=' .config 2>/dev/null | head -1)
-            if [ -n "$RAW_VER" ]; then
-              VERSION=$(echo "$RAW_VER" | sed 's/^CONFIG_VERSION_NUMBER=//; s/^"//; s/"$//; s/^[[:space:]]*//; s/[[:space:]]*$//')
-              echo "  方法1 (.config): $VERSION"
-            else
-              echo "  方法1 (.config): 未找到"
-            fi
+            v=$(grep -m1 '^CONFIG_VERSION_NUMBER=' .config 2>/dev/null | sed 's/^CONFIG_VERSION_NUMBER=//; s/"//g; s/[[:space:]]//g')
+            if is_valid_version "$v"; then VERSION="$v"; echo "  方法1 (.config): $VERSION"; fi
           fi
 
-          # 方法2: 用 make 展开变量
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            VERSION=$(make -s --no-print-directory --eval='include include/version.mk' --eval='dump-version:; @echo $(VERSION_NUMBER)' dump-version 2>/dev/null | tr -d '[:space:][:cntrl:]')
-            if [ -n "$VERSION" ]; then
-              echo "  方法2 (make): $VERSION"
-            else
-              echo "  方法2 (make): 失败"
-            fi
+          # 方法2: 用 make 展开 version.mk 的变量
+          if ! is_valid_version "$VERSION"; then
+            v=$(make -s --no-print-directory --eval='include include/version.mk' --eval='v:;@echo $(VERSION_NUMBER)' v 2>/dev/null | tr -d '[:space:][:cntrl:]')
+            if is_valid_version "$v"; then VERSION="$v"; echo "  方法2 (make): $VERSION"; fi
           fi
 
           # 方法3: 从固件文件名提取
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            SAMPLE_FW=$(find "${FW_DIR}" -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
-            if [ -n "$SAMPLE_FW" ]; then
-              VERSION=$(basename "$SAMPLE_FW" | sed -n 's/^immortalwrt-\([0-9][0-9.]*\)-.*/\1/p')
-              echo "  方法3 (文件名): $VERSION"
-            else
-              echo "  方法3 (文件名): 未找到固件"
+          if ! is_valid_version "$VERSION"; then
+            f=$(find "$FW_DIR" -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
+            if [ -n "$f" ]; then
+              v=$(basename "$f" | sed -n 's/^immortalwrt-\([^-]*-[^-]*\)-.*/\1/p')
+              if is_valid_version "$v"; then VERSION="$v"; echo "  方法3 (文件名): $VERSION"; fi
             fi
           fi
 
-          # 方法4: 默认值
-          if ! echo "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+'; then
-            echo "  所有方法失败, 使用默认值"
-            VERSION="24.10.0"
+          # 方法4: 默认值兜底
+          if ! is_valid_version "$VERSION"; then
+            VERSION="24.10-SNAPSHOT"
+            echo "  方法4 (默认): $VERSION"
           fi
 
           echo "  最终版本: ${VERSION}"
 
+          # 日期和 tag
           DATE=$(date +%Y%m%d)
           TAG="v${VERSION}-${DATE}"
-
-          echo "版本: ${VERSION}"
-          echo "日期: ${DATE}"
-          echo "Tag:  ${TAG}"
+          echo "Tag: ${TAG}"
 
           echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
           echo "RELEASE_DATE=${DATE}" >> $GITHUB_ENV
           echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
 
-          # ========== 只保留 sysupgrade.bin ==========
+          # --- 只复制 sysupgrade.bin 并重命名 (去掉 medatek-filogic) ---
           mkdir -p /tmp/firmware
+          SYSUPGRADE=$(find "$FW_DIR" -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
 
-          SYSUPGRADE=$(find ${FW_DIR} -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
-
-          if [ -n "$SYSUPGRADE" ]; then
-            NEW_NAME="immortalwrt-${VERSION}-${DATE}-mediatek-filogic-netcore_n60-pro-506.5MB-squashfs-sysupgrade.bin"
-            cp "$SYSUPGRADE" "/tmp/firmware/${NEW_NAME}"
-            echo "固件: ${NEW_NAME}"
-          else
+          if [ -z "$SYSUPGRADE" ]; then
             echo "[错误] 未找到 sysupgrade.bin!"
-            find ${FW_DIR} -name "*.bin" -type f 2>/dev/null
+            find "$FW_DIR" -name "*.bin" -type f 2>/dev/null
             exit 1
           fi
 
-          echo "=== 最终固件 ==="
+          NEW_NAME="immortalwrt-${VERSION}-${DATE}-netcore_n60-pro-506.5MB-squashfs-sysupgrade.bin"
+          cp "$SYSUPGRADE" "/tmp/firmware/${NEW_NAME}"
+          echo ""
+          echo "=== 固件 ==="
           ls -lh /tmp/firmware/
 
-      # ===== 第11步: 创建 GitHub Release =====
+      # ============================================================
+      # 11. 发布到 GitHub Releases
+      # ============================================================
       - name: Create Release
         if: success() && steps.Build.outcome == 'success'
         uses: softprops/action-gh-release@v3
@@ -250,34 +245,37 @@ jobs:
           body: |
             ## ImmortalWrt 固件 - 磊科 N60 Pro
 
-            ### 硬件配置
+            ### 硬件
             - 闪存: 512MB (硬改)
             - 内存: 2GB (硬改)
             - 布局: 506.5MB UBI (移除 NMBM)
+            - rootfs: 80MB / rootfs_data: ~420MB
 
             ### 内置插件
             - 代理: daed (eBPF)
             - 组网: EasyTier
             - DDNS: ddns-go (自动最新版)
-            - 文件共享: Samba4 + CIFS 挂载
-            - 流量统计: vnstat2 (WAN) + nlbwmon (内网设备)
+            - 共享: Samba4 + CIFS 挂载
+            - 流量: vnstat2 (WAN) + nlbwmon (内网设备)
             - 主题: luci-theme-argon
 
             ### 精简项
-            - 移除 ssr-plus (被 daed 替代)
-            - 移除 wrtbwmon (被 vnstat2+nlbwmon 替代)
-            - 移除 bootstrap-mod 主题 (被 argon 替代)
-            - 移除调试工具/IPv6用户态/zram/ebtables 等
+            - 移除 ssr-plus (daed 替代)
+            - 移除 wrtbwmon (vnstat2+nlbwmon 替代)
+            - 移除 bootstrap-mod (argon 替代)
+            - 移除调试工具 / IPv6 用户态 / zram / ebtables 等
 
             ### 刷入方法
-            1. 断电 → 按住重置按钮 → 通电 → LED 慢闪后松手
+            1. 断电 → 按住重置 → 通电 → LED 慢闪松手
             2. 浏览器访问 http://10.10.10.1
-            3. 选择 506.5MB 分区表, 上传 sysupgrade.bin
+            3. 选 506.5MB 分区表, 上传 sysupgrade.bin
           files: /tmp/firmware/*.bin
           draft: false
           prerelease: false
 
-      # ===== 第12步: 清理旧 Release (保留最近3个) =====
+      # ============================================================
+      # 12. 清理旧 Release (保留最近 3 个)
+      # ============================================================
       - name: Cleanup old releases
         if: success()
         run: |
@@ -285,17 +283,16 @@ jobs:
           gh release list --limit 100 --json tagName,createdAt \
             --jq 'sort_by(.createdAt) | reverse | .[3:][] | .tagName' |
           while read -r tag; do
-            if [ -n "$tag" ]; then
-              echo "删除: $tag"
-              gh release delete "$tag" --yes --cleanup-tag || true
-            fi
+            [ -n "$tag" ] && echo "删除: $tag" && gh release delete "$tag" --yes --cleanup-tag || true
           done
-          echo "=== 清理完成 ==="
+          echo "=== 完成 ==="
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ===== 第13步: 上传编译日志 (失败时) =====
-      - name: Upload build logs (on failure)
+      # ============================================================
+      # 13. 失败时上传日志
+      # ============================================================
+      - name: Upload logs (on failure)
         if: failure()
         uses: actions/upload-artifact@v6
         with:
@@ -304,12 +301,12 @@ jobs:
             /tmp/build.log
             /tmp/build-error.log
             openwrt/.config
-            openwrt/tmp/
-            openwrt/logs/
           retention-days: 7
           if-no-files-found: warn
 
-      # ===== 第14步: 备用 - 上传固件到 Artifacts =====
+      # ============================================================
+      # 14. 成功时也上传到 Artifacts (备份)
+      # ============================================================
       - name: Upload firmware to Artifacts (backup)
         if: always() && steps.Build.outcome == 'success'
         uses: actions/upload-artifact@v6
