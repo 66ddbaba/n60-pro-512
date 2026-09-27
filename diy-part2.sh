@@ -4,9 +4,9 @@
 # 功能:
 #   1. 基于源码自带的 mt7986-ax6000.config 创建 .config
 #   2. 禁用其他设备, 只保留 N60 Pro
-#   3. 精简: 只移除社区公认无用的插件/工具, 保留所有核心功能
+#   3. 精简: 移除社区公认无用的插件/工具, 保留所有核心功能
 #   4. 添加 daed 内核选项 (BPF/BTF/XDP 支持)
-#   5. 添加 daed、EasyTier、luci-theme-argon
+#   5. 添加 daed、EasyTier、ddns-go、Samba4、流量统计、argon 主题
 #   6. 保留基础库和内核模块, 确保日后 opkg 安装软件不会缺依赖
 #   7. 设置 rootfs 分区大小
 # ============================================================================
@@ -63,121 +63,123 @@ CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_netcore_n60-pro=""
 EOF
 echo "  N60 Pro 已启用"
 
-# ------------------------------------------------------------
-# 4. 精简固件: 只移除社区公认无用的插件和工具
+# ============================================================
+# 4. 精简固件
 #    原则: 保留所有核心路由功能、WiFi、拨号、防火墙
 #         保留基础库和常用内核模块, 确保日后 opkg 不缺依赖
-# ------------------------------------------------------------
+# ============================================================
 echo ""
-echo "--- 1.4 精简固件 (只移除无用插件/工具) ---"
+echo "--- 1.4 精简固件 ---"
 
-# --- 移除: 代理工具 ssr-plus (用 daed 替代) ---
+# --- A. 被新增插件替代的默认包 ---
+
+# ssr-plus 被 daed 替代
 sed -i 's/^CONFIG_PACKAGE_luci-app-ssr-plus=y/# CONFIG_PACKAGE_luci-app-ssr-plus is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_NONE_V2RAY=y/# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_NONE_V2RAY is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks_NONE_Client=y/# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks_NONE_Client is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks_NONE_Server=y/# CONFIG_PACKAGE_luci-app-ssr-plus_INCLUDE_Shadowsocks_NONE_Server is not set/' .config
-echo "  移除: ssr-plus (用 daed 替代)"
+echo "  移除: ssr-plus (被 daed 替代)"
 
-# --- 移除: 调试工具 (日后可 opkg install 按需安装) ---
+# wrtbwmon 被 vnstat2+nlbwmon 替代
+sed -i 's/^CONFIG_PACKAGE_luci-app-wrtbwmon=y/# CONFIG_PACKAGE_luci-app-wrtbwmon is not set/' .config
+echo "  移除: wrtbwmon (被 vnstat2+nlbwmon 替代)"
+
+# luci-theme-bootstrap-mod 被 argon 替代 (内置 bootstrap 仍保留作备用)
+sed -i 's/^CONFIG_PACKAGE_luci-theme-bootstrap-mod=y/# CONFIG_PACKAGE_luci-theme-bootstrap-mod is not set/' .config
+echo "  移除: luci-theme-bootstrap-mod (被 argon 替代, 内置 bootstrap 保留)"
+
+# --- B. 调试工具 (日后可 opkg install 按需安装) ---
 sed -i 's/^CONFIG_PACKAGE_htop=y/# CONFIG_PACKAGE_htop is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_nano=y/# CONFIG_PACKAGE_nano is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kvcedit=y/# CONFIG_PACKAGE_kvcedit is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_tcpdump=y/# CONFIG_PACKAGE_tcpdump is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_libpcap=y/# CONFIG_PACKAGE_libpcap is not set/' .config
-echo "  移除: htop, nano, kvcedit, tcpdump (调试工具, 日后可装)"
+sed -i 's/^CONFIG_PACKAGE_terminfo=y/# CONFIG_PACKAGE_terminfo is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_libncurses=y/# CONFIG_PACKAGE_libncurses is not set/' .config
+echo "  移除: htop, nano, kvcedit, tcpdump, terminfo, libncurses (调试工具)"
 
-# --- 移除: 带宽监控 (非核心, 日后可装) ---
-sed -i 's/^CONFIG_PACKAGE_luci-app-wrtbwmon=y/# CONFIG_PACKAGE_luci-app-wrtbwmon is not set/' .config
-echo "  移除: luci-app-wrtbwmon (带宽监控, 日后可装)"
-
-# --- 移除: N60 Pro 不需要的 LED 驱动 ---
+# --- C. N60 Pro 不需要的硬件驱动 ---
 sed -i 's/^CONFIG_PACKAGE_kmod-leds-ws2812b=y/# CONFIG_PACKAGE_kmod-leds-ws2812b is not set/' .config
-echo "  移除: kmod-leds-ws2812b (N60 Pro 不需要)"
+sed -i 's/^CONFIG_PACKAGE_kmod-ata-core=y/# CONFIG_PACKAGE_kmod-ata-core is not set/' .config
+echo "  移除: kmod-leds-ws2812b, kmod-ata-core (N60 Pro 无此硬件)"
 
-# --- 移除: 桥接防火墙 (家庭主路由很少用) ---
+# --- D. 桥接防火墙 (家庭主路由很少用) ---
 sed -i 's/^CONFIG_PACKAGE_kmod-ebtables=y/# CONFIG_PACKAGE_kmod-ebtables is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-ebtables-ipv4=y/# CONFIG_PACKAGE_kmod-ebtables-ipv4 is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-ebtables-ipv6=y/# CONFIG_PACKAGE_kmod-ebtables-ipv6 is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_ebtables=y/# CONFIG_PACKAGE_ebtables is not set/' .config
-echo "  移除: kmod-ebtables (桥接防火墙, 家庭主路由很少用)"
+echo "  移除: ebtables 全家桶 (桥接防火墙)"
 
-# --- 移除: 极少使用的 iptables 匹配模块 ---
+# --- E. 极少使用的 iptables 匹配模块 ---
 sed -i 's/^CONFIG_PACKAGE_kmod-ipt-filter=y/# CONFIG_PACKAGE_kmod-ipt-filter is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-ipt-tee=y/# CONFIG_PACKAGE_kmod-ipt-tee is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-ipt-u32=y/# CONFIG_PACKAGE_kmod-ipt-u32 is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-ipt-ipv4options=y/# CONFIG_PACKAGE_kmod-ipt-ipv4options is not set/' .config
-echo "  移除: kmod-ipt-filter/tee/u32/ipv4options (极少使用)"
-
-# --- 移除: 对应的 iptables 命令行工具 ---
 sed -i 's/^CONFIG_PACKAGE_iptables-mod-filter=y/# CONFIG_PACKAGE_iptables-mod-filter is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_iptables-mod-tee=y/# CONFIG_PACKAGE_iptables-mod-tee is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_iptables-mod-u32=y/# CONFIG_PACKAGE_iptables-mod-u32 is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_iptables-mod-ipv4options=y/# CONFIG_PACKAGE_iptables-mod-ipv4options is not set/' .config
-echo "  移除: 对应 iptables-mod 工具"
+echo "  移除: kmod-ipt-filter/tee/u32/ipv4options + 对应 iptables-mod"
 
-# --- 移除: terminfo/libncurses (随 htop/nano 移除后不再需要) ---
-sed -i 's/^CONFIG_PACKAGE_terminfo=y/# CONFIG_PACKAGE_terminfo is not set/' .config
-sed -i 's/^CONFIG_PACKAGE_libncurses=y/# CONFIG_PACKAGE_libncurses is not set/' .config
-echo "  移除: terminfo, libncurses (随调试工具移除)"
+# --- F. 旧版兼容层 (nftables 已是默认) ---
+sed -i 's/^CONFIG_PACKAGE_kmod-ipt-compat-xtables=y/# CONFIG_PACKAGE_kmod-ipt-compat-xtables is not set/' .config
+echo "  移除: kmod-ipt-compat-xtables (旧版 xtables 兼容层)"
 
-# --- 移除: IPv6 相关组件 (用户不需要 IPv6) ---
-# 注意: 保留 kmod-ipv6 和 kmod-ip6tables (内核基础, 避免隐性依赖问题)
-# 只移除 IPv6 用户态工具和服务, 不动内核协议栈
+# --- G. 调试诊断工具 ---
+sed -i 's/^CONFIG_PACKAGE_kmod-inet-diag=y/# CONFIG_PACKAGE_kmod-inet-diag is not set/' .config
+echo "  移除: kmod-inet-diag (socket 诊断, 调试用)"
+
+# --- H. IPv6 用户态工具 (用户不需要 IPv6) ---
+# 保留 kmod-ipv6 和 kmod-ip6tables (内核基础, 避免隐性依赖)
 sed -i 's/^CONFIG_PACKAGE_ip6tables-extra=y/# CONFIG_PACKAGE_ip6tables-extra is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_ip6tables-nft=y/# CONFIG_PACKAGE_ip6tables-nft is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-ipt-raw6=y/# CONFIG_PACKAGE_kmod-ipt-raw6 is not set/' .config
+sed -i 's/^CONFIG_PACKAGE_kmod-ip6tables-extra=y/# CONFIG_PACKAGE_kmod-ip6tables-extra is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_odhcp6c=y/# CONFIG_PACKAGE_odhcp6c is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_odhcpd-ipv6only=y/# CONFIG_PACKAGE_odhcpd-ipv6only is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_luci-proto-ipv6=y/# CONFIG_PACKAGE_luci-proto-ipv6 is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_luci-proto-6in4=y/# CONFIG_PACKAGE_luci-proto-6in4 is not set/' .config
-echo "  移除: IPv6 用户态工具 (ip6tables-extra/nft, raw6, odhcp6c, odhcpd-ipv6only, luci-proto-ipv6/6in4)"
-echo "  保留: kmod-ipv6, kmod-ip6tables (内核基础, 避免隐性依赖)"
+echo "  移除: IPv6 用户态工具 (保留 kmod-ipv6/ip6tables 内核基础)"
 
-# --- 移除: 广告过滤 (非核心, 日后可装) ---
+# --- I. 广告过滤 (非核心) ---
 sed -i 's/^CONFIG_PACKAGE_blockd=y/# CONFIG_PACKAGE_blockd is not set/' .config
-echo "  移除: blockd (广告过滤, 日后可装)"
+echo "  移除: blockd (广告过滤)"
 
-# --- 移除: 寄存器/PHY 调试工具 ---
+# --- J. 寄存器/PHY 调试工具 ---
 sed -i 's/^CONFIG_PACKAGE_regs=y/# CONFIG_PACKAGE_regs is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_mii_mgr=y/# CONFIG_PACKAGE_mii_mgr is not set/' .config
-echo "  移除: regs, mii_mgr (寄存器/PHY调试工具)"
+echo "  移除: regs, mii_mgr (寄存器/PHY 调试)"
 
-# --- 移除: 输入设备库 (路由器不需要键盘鼠标等) ---
+# --- K. 输入设备库 (路由器不需要键盘鼠标) ---
 sed -i 's/^CONFIG_PACKAGE_libfido2=y/# CONFIG_PACKAGE_libfido2 is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_libevdev=y/# CONFIG_PACKAGE_libevdev is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_libudev-zero=y/# CONFIG_PACKAGE_libudev-zero is not set/' .config
-echo "  移除: libfido2, libevdev, libudev-zero (输入设备库, 路由器不需要)"
+sed -i 's/^CONFIG_PACKAGE_libcbor=y/# CONFIG_PACKAGE_libcbor is not set/' .config
+echo "  移除: libfido2, libevdev, libudev-zero, libcbor (输入设备库)"
 
-# --- 移除: SSH 密钥生成 (dropbear 自带, openssh-keygen 多余) ---
+# --- L. SSH 密钥生成 (dropbear 自带) ---
 sed -i 's/^CONFIG_PACKAGE_openssh-keygen=y/# CONFIG_PACKAGE_openssh-keygen is not set/' .config
-echo "  移除: openssh-keygen (dropbear 已提供 SSH)"
+echo "  移除: openssh-keygen (dropbear 已提供)"
 
-# --- 移除: automount (远程网络文件系统按需挂载, 用户需要挂载远程SMB, 保留) ---
-# 注意: kmod-fs-autofs4 保留, 用于按需挂载远程网络文件系统
-# echo "  不移除: kmod-fs-autofs4 (用于远程文件按需挂载)"
-
-# --- 移除: kvc 配置库 (kvcedit 已移除, 不再需要) ---
+# --- M. kvc 配置库 (kvcedit 已移除) ---
 sed -i 's/^CONFIG_PACKAGE_libkvcutil=y/# CONFIG_PACKAGE_libkvcutil is not set/' .config
-echo "  移除: libkvcutil (kvcedit 配套库)"
+echo "  移除: libkvcutil (kvcedit 配套)"
 
-# --- 移除: resolveip (DNS解析工具, dnsmasq已提供) ---
+# --- N. DNS 解析工具 (dnsmasq 已提供) ---
 sed -i 's/^CONFIG_PACKAGE_resolveip=y/# CONFIG_PACKAGE_resolveip is not set/' .config
-echo "  移除: resolveip (DNS解析工具)"
+echo "  移除: resolveip (dnsmasq 已提供)"
 
-# --- 移除: zram-swap (2GB 内存足够, 不需要内存压缩) ---
+# --- O. zram 内存压缩 (2GB 内存足够) ---
 sed -i 's/^CONFIG_PACKAGE_zram-swap=y/# CONFIG_PACKAGE_zram-swap is not set/' .config
 sed -i 's/^CONFIG_PACKAGE_kmod-zram=y/# CONFIG_PACKAGE_kmod-zram is not set/' .config
-echo "  移除: zram-swap (2GB内存足够, 不需要内存压缩)"
-
-# --- 移除: liblzo (zram 移除后不再需要) ---
 sed -i 's/^CONFIG_PACKAGE_kmod-lib-lzo=y/# CONFIG_PACKAGE_kmod-lib-lzo is not set/' .config
-echo "  移除: kmod-lib-lzo (zram 配套压缩库)"
+echo "  移除: zram-swap, kmod-zram, kmod-lib-lzo (2GB 内存不需要)"
 
 echo "  精简完成"
 
-# ------------------------------------------------------------
+# ============================================================
 # 5. 添加 daed 内核选项 (eBPF 支持)
-# ------------------------------------------------------------
+# ============================================================
 echo ""
 echo "--- 1.5 添加 daed 内核选项 ---"
 cat >> .config << 'EOF'
@@ -193,22 +195,22 @@ CONFIG_BPF_TOOLCHAIN_HOST=y
 EOF
 echo "  daed 内核选项已添加"
 
-# ------------------------------------------------------------
-# 6. 添加 daed
-# ------------------------------------------------------------
+# ============================================================
+# 6. 添加 daed 代理工具
+# ============================================================
 echo ""
 echo "--- 1.6 添加 daed ---"
 cat >> .config << 'EOF'
 
-# ===== daed 代理工具 =====
+# ===== daed 代理工具 (替代 ssr-plus) =====
 CONFIG_PACKAGE_daed=y
 CONFIG_PACKAGE_luci-app-daed=y
 EOF
 echo "  daed 已添加"
 
-# ------------------------------------------------------------
-# 7. 添加 EasyTier
-# ------------------------------------------------------------
+# ============================================================
+# 7. 添加 EasyTier 组网工具
+# ============================================================
 echo ""
 echo "--- 1.7 添加 EasyTier ---"
 cat >> .config << 'EOF'
@@ -220,11 +222,11 @@ CONFIG_PACKAGE_luci-app-easytier=y
 EOF
 echo "  EasyTier 已添加"
 
-# ------------------------------------------------------------
-# 8. 添加 ddns-go (主程序 + LuCI 界面)
-# ------------------------------------------------------------
+# ============================================================
+# 8. 添加 ddns-go (LuCI 界面, 主程序在 files/)
+# ============================================================
 echo ""
-echo "--- 1.8 添加 ddns-go (主程序+LuCI) ---"
+echo "--- 1.8 添加 ddns-go ---"
 cat >> .config << 'EOF'
 
 # ===== ddns-go 动态域名 =====
@@ -232,13 +234,13 @@ cat >> .config << 'EOF'
 # 这里只启用 LuCI 管理界面
 CONFIG_PACKAGE_luci-app-ddns-go=y
 EOF
-echo "  ddns-go 已添加 (主程序 + LuCI 界面)"
+echo "  ddns-go 已添加"
 
-# ------------------------------------------------------------
-# 8.5 添加文件共享 (Samba + CIFS 挂载)
-# ------------------------------------------------------------
+# ============================================================
+# 9. 添加文件共享 (Samba + CIFS 挂载)
+# ============================================================
 echo ""
-echo "--- 1.85 添加文件共享 (Samba + CIFS) ---"
+echo "--- 1.9 添加文件共享 ---"
 cat >> .config << 'EOF'
 
 # ===== Samba 网络共享 (共享到局域网) =====
@@ -250,7 +252,7 @@ CONFIG_PACKAGE_wsdd2=y
 CONFIG_PACKAGE_kmod-fs-cifs=y
 CONFIG_PACKAGE_cifsmount=y
 
-# ===== NLS 字符集 (CIFS 需要) =====
+# ===== NLS 字符集 (CIFS 需要, 中文文件名不乱码) =====
 CONFIG_PACKAGE_kmod-nls-base=y
 CONFIG_PACKAGE_kmod-nls-utf8=y
 CONFIG_PACKAGE_kmod-nls-cp437=y
@@ -258,85 +260,115 @@ CONFIG_PACKAGE_kmod-nls-iso8859-1=y
 EOF
 echo "  文件共享已添加 (samba4 + cifs)"
 
-# ------------------------------------------------------------
-# 9. 添加 luci-theme-argon 主题
-# ------------------------------------------------------------
+# ============================================================
+# 10. 添加流量统计 (vnstat2 + nlbwmon, 替代 wrtbwmon)
+# ============================================================
 echo ""
-echo "--- 1.8 添加 luci-theme-argon 主题 ---"
+echo "--- 1.10 添加流量统计 ---"
 cat >> .config << 'EOF'
 
-# ===== Argon 主题 =====
+# ===== vnstat2: WAN 口精确流量统计 (按接口/月/日/小时) =====
+CONFIG_PACKAGE_vnstat2=y
+CONFIG_PACKAGE_vnstat2-image=y
+CONFIG_PACKAGE_luci-app-vnstat2=y
+
+# ===== nlbwmon: 内网各设备流量统计 (基于 conntrack) =====
+CONFIG_PACKAGE_nlbwmon=y
+CONFIG_PACKAGE_luci-app-nlbwmon=y
+EOF
+echo "  流量统计已添加 (vnstat2 + nlbwmon)"
+
+# ============================================================
+# 11. 添加 luci-theme-argon 主题
+# ============================================================
+echo ""
+echo "--- 1.11 添加 argon 主题 ---"
+cat >> .config << 'EOF'
+
+# ===== Argon 主题 (替代 bootstrap-mod) =====
 CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_luci-app-argon-config=y
 EOF
 echo "  argon 主题已添加"
 
-# ------------------------------------------------------------
-# 9. 设置 rootfs 分区大小
-# ------------------------------------------------------------
+# ============================================================
+# 12. 设置 rootfs 分区大小
+# ============================================================
 echo ""
-echo "--- 1.9 设置 rootfs 分区大小 ---"
-echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=480' >> .config
-echo "  rootfs 分区大小设为 480MB"
+echo "--- 1.12 设置 rootfs 分区大小 ---"
+# 506.5MB UBI = kernel(~6MB) + rootfs(100MB) + rootfs_data(~400MB)
+# 固件实际 ~61MB, rootfs 设 100MB 留余量, 剩余给 rootfs_data 装插件
+echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=100' >> .config
+echo "  rootfs: 100MB, rootfs_data: ~400MB"
 
-# ------------------------------------------------------------
-# 10. 运行 make defconfig 解析依赖关系
-# ------------------------------------------------------------
+# ============================================================
+# 13. 运行 make defconfig 解析依赖
+# ============================================================
 echo ""
-echo "--- 1.10 运行 make defconfig 解析依赖 ---"
+echo "--- 1.13 运行 make defconfig ---"
 make defconfig
 echo "  配置解析完成"
 
-# ------------------------------------------------------------
-# 11. 显示关键配置项
-# ------------------------------------------------------------
+# ============================================================
+# 14. 验证关键配置
+# ============================================================
 echo ""
 echo "============================================================"
-echo "  关键配置项验证:"
+echo "  关键配置验证"
 echo "============================================================"
 
 echo ""
 echo "[目标设备]"
-grep "CONFIG_TARGET_DEVICE.*netcore" .config || echo "  (未找到 N60 Pro!)"
+grep "CONFIG_TARGET_DEVICE.*netcore" .config || echo "  (未找到!)"
 
 echo ""
-echo "[代理工具]"
-grep -E "CONFIG_PACKAGE_daed|CONFIG_PACKAGE_luci-app-daed" .config || echo "  (未找到 daed!)"
-grep -E "CONFIG_KERNEL.*BPF|CONFIG_KERNEL.*BTF|CONFIG_XDP|CONFIG_BPF_TOOLCHAIN" .config || echo "  (未找到 BPF 内核选项!)"
+echo "[代理工具 daed]"
+grep -E "CONFIG_PACKAGE_daed=y|CONFIG_PACKAGE_luci-app-daed=y" .config || echo "  (未找到!)"
+grep -E "CONFIG_KERNEL.*BPF|CONFIG_KERNEL.*BTF|CONFIG_XDP|CONFIG_BPF_TOOLCHAIN" .config | head -3
 
 echo ""
-echo "[EasyTier]"
-grep -E "CONFIG_PACKAGE_easytier|CONFIG_PACKAGE_luci-app-easytier" .config || echo "  (未找到 EasyTier!)"
+echo "[组网 EasyTier]"
+grep -E "CONFIG_PACKAGE_easytier=y|CONFIG_PACKAGE_luci-app-easytier=y" .config || echo "  (未找到!)"
 
 echo ""
 echo "[DDNS]"
-grep -E "CONFIG_PACKAGE_luci-app-ddns-go=y" .config || echo "  (未找到 luci-app-ddns-go!)"
-ls -lh files/usr/bin/ddns-go 2>/dev/null && echo "  ddns-go 二进制已在 files/ 中" || echo "  (警告: ddns-go 二进制不存在!)"
+grep "CONFIG_PACKAGE_luci-app-ddns-go=y" .config || echo "  (未找到!)"
+ls -lh files/usr/bin/ddns-go 2>/dev/null && echo "  二进制: OK" || echo "  二进制: 缺失!"
 
 echo ""
 echo "[文件共享]"
-grep -E "CONFIG_PACKAGE_samba4-server" .config || echo "  (未找到 samba4-server!)"
-grep -E "CONFIG_PACKAGE_luci-app-samba4" .config || echo "  (未找到 luci-app-samba4!)"
-grep -E "CONFIG_PACKAGE_kmod-fs-cifs" .config || echo "  (未找到 kmod-fs-cifs!)"
+grep "CONFIG_PACKAGE_samba4-server=y" .config || echo "  samba4: 缺失!"
+grep "CONFIG_PACKAGE_kmod-fs-cifs=y" .config || echo "  cifs: 缺失!"
+
+echo ""
+echo "[流量统计]"
+grep "CONFIG_PACKAGE_luci-app-vnstat2=y" .config || echo "  vnstat2: 缺失!"
+grep "CONFIG_PACKAGE_luci-app-nlbwmon=y" .config || echo "  nlbwmon: 缺失!"
 
 echo ""
 echo "[主题]"
-grep -E "CONFIG_PACKAGE_luci-theme-argon" .config || echo "  (未找到 argon 主题!)"
+grep "CONFIG_PACKAGE_luci-theme-argon=y" .config || echo "  argon: 缺失!"
 
 echo ""
 echo "[核心保留项]"
-echo -n "  WiFi驱动: "; grep -c "CONFIG_PACKAGE_kmod-mt_wifi" .config 2>/dev/null | xargs -I{} sh -c '[ {} -gt 0 ] && echo "保留" || echo "缺失!"'
-echo -n "  硬件NAT:  "; grep -c "CONFIG_PACKAGE_kmod-mediatek_hnat" .config 2>/dev/null | xargs -I{} sh -c '[ {} -gt 0 ] && echo "保留" || echo "缺失!"'
-echo -n "  加速:     "; grep -c "CONFIG_PACKAGE_luci-app-turboacc-mtk" .config 2>/dev/null | xargs -I{} sh -c '[ {} -gt 0 ] && echo "保留" || echo "缺失!"'
-echo -n "  WiFi配置: "; grep -c "CONFIG_PACKAGE_luci-app-mtwifi-cfg" .config 2>/dev/null | xargs -I{} sh -c '[ {} -gt 0 ] && echo "保留" || echo "缺失!"'
-echo -n "  隧道:     "; grep -c "CONFIG_PACKAGE_kmod-tun" .config 2>/dev/null | xargs -I{} sh -c '[ {} -gt 0 ] && echo "保留" || echo "缺失!"'
-echo -n "  BBR:      "; grep -c "CONFIG_PACKAGE_kmod-tcp-bbr" .config 2>/dev/null | xargs -I{} sh -c '[ {} -gt 0 ] && echo "保留" || echo "缺失!"'
+for pkg in kmod-mt_wifi kmod-mediatek_hnat luci-app-turboacc-mtk luci-app-mtwifi-cfg kmod-tun kmod-tcp-bbr kmod-usb-storage kmod-fs-vfat kmod-fs-ext4 block-mount; do
+    cnt=$(grep -c "CONFIG_PACKAGE_${pkg}" .config 2>/dev/null || echo 0)
+    if [ "$cnt" -gt 0 ]; then
+        echo "  $pkg: OK"
+    else
+        echo "  $pkg: 缺失!"
+    fi
+done
 
 echo ""
-echo "[已移除]"
-grep -q "CONFIG_PACKAGE_luci-app-ssr-plus is not set" .config && echo "  ssr-plus: 已移除" || echo "  ssr-plus: 未处理"
-grep -q "CONFIG_PACKAGE_htop is not set" .config && echo "  htop: 已移除" || echo "  htop: 未处理"
-grep -q "CONFIG_PACKAGE_tcpdump is not set" .config && echo "  tcpdump: 已移除" || echo "  tcpdump: 未处理"
+echo "[已移除项]"
+for pkg in luci-app-ssr-plus htop tcpdump wrtbwmon ebtables zram-swap blockd kvcedit; do
+    if grep -q "CONFIG_PACKAGE_${pkg} is not set" .config; then
+        echo "  $pkg: 已移除"
+    else
+        echo "  $pkg: 未处理"
+    fi
+done
 
 echo ""
 echo "[分区大小]"
@@ -344,9 +376,8 @@ grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config || echo "  (使用默认值)"
 
 echo ""
 echo "============================================================"
-echo "  DIY Part 2 完成! .config 已生成"
-echo "  精简策略: 移除无用插件/调试工具/IPv6用户态/zram"
-echo "  保留策略: 核心路由/WiFi/拨号/加速/基础库全保留"
-echo "  内置插件: daed, EasyTier, ddns-go, samba4, cifs, argon主题"
-echo "  其他插件: 日后通过 opkg 按需安装"
+echo "  DIY Part 2 完成!"
+echo "  精简: ssr-plus/wrtbwmon/bootstrap-mod/调试工具/IPv6/zram 等 ~37 个包"
+echo "  内置: daed, EasyTier, ddns-go, samba4, cifs, vnstat2, nlbwmon, argon"
+echo "  保留: WiFi/拨号/加速/防火墙/USB存储/基础库全保留"
 echo "============================================================"
