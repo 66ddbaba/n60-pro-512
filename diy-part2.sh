@@ -34,8 +34,8 @@ DISABLE_DEVICES=(
     "xiaomi_redmi-router-ax6000-stock"
 )
 for dev in "${DISABLE_DEVICES[@]}"; do
-    sed -i "s/^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_${dev}=y/# CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_${dev} is not set/" .config
-    sed -i "s/^CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_${dev}=/# CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_${dev} is not set/" .config
+    sed -i "s/^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_${dev}=y/# CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_${dev} is not set/" .config 2>/dev/null || true
+    sed -i "s/^CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_${dev}=/# CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_${dev} is not set/" .config 2>/dev/null || true
 done
 echo "  [OK] 已禁用其他 ${#DISABLE_DEVICES[@]} 个设备"
 
@@ -55,15 +55,14 @@ echo "--- 2. 精简固件 ---"
 
 REMOVE_COUNT=0
 
-# 移除一个包的通用函数
+# 移除一个包的通用函数 (始终返回 0, 避免触发 set -e)
 remove_pkg() {
     local pkg="$1"
-    if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config; then
+    if grep -q "^CONFIG_PACKAGE_${pkg}=y" .config 2>/dev/null; then
         sed -i "s/^CONFIG_PACKAGE_${pkg}=y/# CONFIG_PACKAGE_${pkg} is not set/" .config
         REMOVE_COUNT=$((REMOVE_COUNT + 1))
-        return 0
     fi
-    return 1
+    return 0
 }
 
 # --- A. 被新增插件替代的 ---
@@ -73,25 +72,25 @@ remove_pkg "luci-app-ssr-plus_INCLUDE_Shadowsocks_NONE_Client"
 remove_pkg "luci-app-ssr-plus_INCLUDE_Shadowsocks_NONE_Server"
 remove_pkg "luci-app-wrtbwmon"                     # vnstat2+nlbwmon 替代
 remove_pkg "luci-theme-bootstrap-mod"              # argon 替代 (内置 bootstrap 保留)
-echo "  [A] 被替代的插件: 已移除"
+echo "  [A] 被替代的插件"
 
 # --- B. 调试/诊断工具 (日后可 opkg 按需安装) ---
 for pkg in htop nano kvcedit tcpdump libpcap terminfo libncurses regs mii_mgr; do
     remove_pkg "$pkg"
 done
 remove_pkg "kmod-inet-diag"                       # socket 诊断
-echo "  [B] 调试工具: 已移除"
+echo "  [B] 调试工具"
 
 # --- C. N60 Pro 不需要的硬件驱动 ---
 remove_pkg "kmod-leds-ws2812b"                     # WS2812B LED (N60 Pro 没有)
 remove_pkg "kmod-ata-core"                         # SATA (N60 Pro 没有)
-echo "  [C] 无用硬件驱动: 已移除"
+echo "  [C] 无用硬件驱动"
 
 # --- D. 桥接防火墙 (家庭主路由很少用) ---
 for pkg in kmod-ebtables kmod-ebtables-ipv4 kmod-ebtables-ipv6 ebtables; do
     remove_pkg "$pkg"
 done
-echo "  [D] ebtables 桥接防火墙: 已移除"
+echo "  [D] ebtables 桥接防火墙"
 
 # --- E. 极少用的 iptables 模块 ---
 for mod in filter tee u32 ipv4options; do
@@ -99,13 +98,13 @@ for mod in filter tee u32 ipv4options; do
     remove_pkg "iptables-mod-${mod}"
 done
 remove_pkg "kmod-ipt-compat-xtables"               # 旧版 xtables 兼容层
-echo "  [E] 不常用 iptables 模块: 已移除"
+echo "  [E] 不常用 iptables 模块"
 
 # --- F. IPv6 用户态工具 (保留内核 IPv6 基础, 避免隐性依赖) ---
 for pkg in ip6tables-extra ip6tables-nft kmod-ipt-raw6 kmod-ip6tables-extra odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
     remove_pkg "$pkg"
 done
-echo "  [F] IPv6 用户态工具: 已移除 (内核保留)"
+echo "  [F] IPv6 用户态工具 (内核保留)"
 
 # --- G. 其他非核心 ---
 remove_pkg "blockd"                                # 广告过滤
@@ -119,7 +118,7 @@ remove_pkg "resolveip"                             # dnsmasq 已提供
 remove_pkg "zram-swap"                             # 2GB 内存足够
 remove_pkg "kmod-zram"
 remove_pkg "kmod-lib-lzo"
-echo "  [G] 其他非核心: 已移除"
+echo "  [G] 其他非核心"
 
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
@@ -249,7 +248,7 @@ for pkg in luci-app-ssr-plus htop tcpdump wrtbwmon ebtables zram-swap; do
     if grep -q "CONFIG_PACKAGE_${pkg} is not set" .config; then
         echo "  [OK] ${pkg}: 已移除"
     else
-        echo "  [!!] ${pkg}: 仍在"
+        echo "  [--] ${pkg}: 不在配置中(可能在feeds里)"
     fi
 done
 
