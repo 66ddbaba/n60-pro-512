@@ -245,11 +245,17 @@ jobs:
           body: |
             ## ImmortalWrt 固件 - 磊科 N60 Pro
 
+            ### 登录信息
+            - 管理地址: **http://10.10.6.1**
+            - 默认账号: `root`
+            - 默认密码: **无** (首次登录请直接点登录, 然后设置密码)
+
             ### 硬件
             - 闪存: 512MB (硬改)
             - 内存: 2GB (硬改)
             - 布局: 506.5MB UBI (移除 NMBM)
             - rootfs: 80MB / rootfs_data: ~420MB
+            - 模板: mt7975-ipailna-high-power (237高功率版)
 
             ### 内置插件
             - 代理: daed (eBPF)
@@ -258,15 +264,24 @@ jobs:
             - 共享: Samba4 + CIFS 挂载
             - 流量: vnstat2 (WAN) + nlbwmon (内网设备)
             - 主题: luci-theme-argon
+            - 工具: ttyd (网页终端,免登录) + minidlna (DLNA) + irqbalance + autocore
+
+            ### 系统优化 (uci-defaults 自动执行)
+            - 拥塞控制: BBR (替代默认 CUBIC)
+            - Samba4: 多通道 + 访客访问
+            - ttyd: 免登录 (仅限 LAN 口)
+            - 默认 IP: 10.10.6.1
 
             ### 精简项
             - 移除 ssr-plus (daed 替代)
-            - 移除 wrtbwmon (vnstat2+nlbwmon 替代)
+            - 移除 wrtbwmon + statistics (vnstat2+nlbwmon 替代)
+            - 移除 diag-core (命令行仍可用)
+            - 移除 argon-config (主题用默认即可)
             - 移除 bootstrap-mod (argon 替代)
             - 移除调试工具 / IPv6 用户态 / zram / ebtables 等
 
             ### 刷入方法
-            1. 断电 → 按住重置 → 通电 → LED 慢闪松手
+            1. 断电 → 按住重置或Mesh键 → 通电 → 电源LED慢闪4次快闪2次 → 松手
             2. 浏览器访问 http://10.10.10.1
             3. 选 506.5MB 分区表, 上传 sysupgrade.bin
           files: /tmp/firmware/*.bin
