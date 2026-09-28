@@ -90,7 +90,6 @@ echo "--- 3. 克隆第三方软件包 ---"
 declare -A REPOS=(
     ["package/luci-app-easytier"]="https://github.com/EasyTier/luci-app-easytier.git"
     ["package/luci-theme-argon"]="https://github.com/jerrykuku/luci-theme-argon.git"
-    ["package/luci-app-argon-config"]="https://github.com/jerrykuku/luci-app-argon-config.git"
     ["package/luci-app-ddns-go"]="https://github.com/sirpdboy/luci-app-ddns-go.git"
 )
 
@@ -205,6 +204,58 @@ else
 fi
 
 # ==================================================================
+# 6. uci-defaults 优化脚本 (刷入后自动执行一次)
+#    - WiFi 高功率 (国家码 US + 最大功率)
+#    - BBR 拥塞控制
+#    - Samba4 优化
+# ==================================================================
+echo ""
+echo "--- 6. uci-defaults 系统优化 ---"
+
+mkdir -p files/etc/uci-defaults
+
+cat > files/etc/uci-defaults/99-custom-settings << 'UCIEOF'
+#!/bin/sh
+# 自定义默认设置, 首次启动时执行一次
+# 功率相关严格使用 high-power.config 模板, 此处不做额外修改
+
+# --- 1. BBR 拥塞控制 (替代默认 CUBIC) ---
+uci set system.@system[0].congctl='bbr' 2>/dev/null || true
+echo 'net.core.default_qdisc = fq' >> /etc/sysctl.conf
+echo 'net.ipv4.tcp_congestion_control = bbr' >> /etc/sysctl.conf
+
+# --- 2. Samba4 优化 (多通道 + 访客访问) ---
+if uci get samba4.@samba4[0] >/dev/null 2>&1; then
+    uci set samba4.@samba4[0].enable_multichannel='1'
+    uci set samba4.@samba4[0].disable_netbios='0'
+    uci set samba4.@samba4[0].allow_guest='1'
+fi
+
+# --- 3. ttyd 免登录 (内网使用, 注意安全) ---
+if uci get ttyd.@ttyd[0] >/dev/null 2>&1; then
+    uci set ttyd.@ttyd[0].interface='@lan'
+    uci set ttyd.@ttyd[0].command='/bin/login -f root'
+fi
+
+# --- 4. 默认 LAN IP 修改为 10.10.6.1 ---
+uci set network.lan.ipaddr='10.10.6.1'
+uci set network.lan.netmask='255.255.255.0'
+
+# --- 5. 提交所有修改 ---
+uci commit system
+uci commit samba4 2>/dev/null || true
+uci commit ttyd 2>/dev/null || true
+uci commit network
+
+# --- 6. 应用 sysctl ---
+sysctl -p >/dev/null 2>&1 || true
+
+exit 0
+UCIEOF
+chmod +x files/etc/uci-defaults/99-custom-settings
+echo "  [OK] uci-defaults 优化脚本已创建 (BBR + Samba优化 + ttyd免登录 + LAN IP 10.10.6.1)"
+
+# ==================================================================
 # 完成
 # ==================================================================
 echo ""
@@ -213,4 +264,5 @@ echo "  DIY Part 1 完成!"
 echo "  DTS:  2GB 内存 + 无 NMBM + 506.5MB UBI"
 echo "  设备: netcore_n60-pro"
 echo "  包:   EasyTier, argon 主题, ddns-go(主程序+界面)"
+echo "  优化: BBR + Samba + ttyd免登录 + LAN IP 10.10.6.1"
 echo "============================================================"
