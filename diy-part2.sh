@@ -2,11 +2,14 @@
 # ============================================================================
 #  DIY Part 2 - 生成编译配置 .config (feeds 安装之后执行)
 #
+#  模板: mt7975-ipailna-high-power.config (237高功率版)
+#
 #  原则:
 #    - 保留所有核心路由功能 (WiFi/拨号/防火墙/加速/USB存储)
 #    - 保留基础库和常用内核模块, 确保日后 opkg 不缺依赖
 #    - 精简调试工具/不常用模块/被替代的旧插件
-#    - 添加 daed / EasyTier / ddns-go / samba4 / 流量统计 / argon
+#    - 添加 daed / EasyTier / ddns-go / samba4 / 流量统计
+#    - 添加 argon / ttyd / minidlna / irqbalance / autocore
 # ============================================================================
 set -e
 
@@ -20,9 +23,9 @@ echo "============================================================"
 echo ""
 echo "--- 1. 基础配置 ---"
 
-# 从 mt7986-ax6000.config 开始 (最接近 N60 Pro 的配置)
-cp -f defconfig/mt7986-ax6000.config .config
-echo "  [OK] 基础配置: mt7986-ax6000.config"
+# 从 mt7975-ipailna-high-power.config 开始 (237大佬推荐的高功率模板)
+cp -f defconfig/mt7975-ipailna-high-power.config .config
+echo "  [OK] 基础配置: mt7975-ipailna-high-power.config"
 
 # 禁用其他设备, 只编译 N60 Pro (省编译时间)
 DISABLE_DEVICES=(
@@ -32,18 +35,26 @@ DISABLE_DEVICES=(
     "tplink_tl-xdr6088"
     "xiaomi_redmi-router-ax6000-ubootmod"
     "xiaomi_redmi-router-ax6000-stock"
+    "ruijie_rg-x60-pro"
+    "ruijie_rg-x60-new"
+    "ruijie_ew-6000gx-pro"
 )
+# 同时尝试两种命名格式 (filogic 和 mt7986)
 for dev in "${DISABLE_DEVICES[@]}"; do
-    sed -i "s/^CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_${dev}=y/# CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_${dev} is not set/" .config 2>/dev/null || true
-    sed -i "s/^CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_${dev}=/# CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_${dev} is not set/" .config 2>/dev/null || true
+    for fmt in "mediatek_filogic" "mediatek_mt7986"; do
+        sed -i "s/^CONFIG_TARGET_DEVICE_${fmt}_DEVICE_${dev}=y/# CONFIG_TARGET_DEVICE_${fmt}_DEVICE_${dev} is not set/" .config 2>/dev/null || true
+        sed -i "s/^CONFIG_TARGET_DEVICE_PACKAGES_${fmt}_DEVICE_${dev}=/# CONFIG_TARGET_DEVICE_PACKAGES_${fmt}_DEVICE_${dev} is not set/" .config 2>/dev/null || true
+    done
 done
-echo "  [OK] 已禁用其他 ${#DISABLE_DEVICES[@]} 个设备"
+echo "  [OK] 已禁用其他设备 (${#DISABLE_DEVICES[@]} 个)"
 
-# 启用 N60 Pro
+# 启用 N60 Pro (同时写两种格式, 哪个生效用哪个)
 cat >> .config << 'EOF'
 # N60 Pro 设备
 CONFIG_TARGET_DEVICE_mediatek_filogic_DEVICE_netcore_n60-pro=y
 CONFIG_TARGET_DEVICE_PACKAGES_mediatek_filogic_DEVICE_netcore_n60-pro=""
+CONFIG_TARGET_DEVICE_mediatek_mt7986_DEVICE_netcore_n60-pro=y
+CONFIG_TARGET_DEVICE_PACKAGES_mediatek_mt7986_DEVICE_netcore_n60-pro=""
 EOF
 echo "  [OK] 启用 N60 Pro"
 
@@ -120,6 +131,11 @@ remove_pkg "kmod-zram"
 remove_pkg "kmod-lib-lzo"
 echo "  [G] 其他非核心"
 
+# --- H. 诊断/统计类界面 (底层功能保留, 仅移除网页界面) ---
+remove_pkg "luci-app-diag-core"                    # 网络诊断网页界面 (ping/traceroute 命令行仍可用)
+remove_pkg "luci-app-statistics"                   # 实时统计页面 (vnstat2 + nlbwmon 已替代)
+echo "  [H] 诊断/统计网页界面"
+
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
 # ==================================================================
@@ -185,9 +201,23 @@ CONFIG_PACKAGE_luci-app-nlbwmon=y
 
 # ===== 主题: argon =====
 CONFIG_PACKAGE_luci-theme-argon=y
-CONFIG_PACKAGE_luci-app-argon-config=y
+
+# ===== 网页终端: ttyd (浏览器直接 SSH, 小白必备) =====
+CONFIG_PACKAGE_ttyd=y
+CONFIG_PACKAGE_luci-app-ttyd=y
+
+# ===== DLNA 媒体服务器: minidlna (电视直接播硬盘视频) =====
+CONFIG_PACKAGE_minidlna=y
+CONFIG_PACKAGE_luci-app-minidlna=y
+
+# ===== CPU 中断均衡: irqbalance (4核分散中断) =====
+CONFIG_PACKAGE_irqbalance=y
+CONFIG_PACKAGE_luci-app-irqbalance=y
+
+# ===== 硬件信息显示: autocore (概览页显示 CPU 型号/频率/温度) =====
+CONFIG_PACKAGE_autocore-arm=y
 EOF
-echo "  [OK] daed + EasyTier + ddns-go + samba4 + vnstat2 + nlbwmon + argon"
+echo "  [OK] daed + EasyTier + ddns-go + samba4 + vnstat2 + nlbwmon + argon + ttyd + minidlna + irqbalance + autocore"
 
 # ==================================================================
 # 5. rootfs 分区大小
@@ -235,6 +265,13 @@ check_pkg "kmod-fs-cifs"
 check_pkg "luci-app-vnstat2"
 check_pkg "luci-app-nlbwmon"
 check_pkg "luci-theme-argon"
+check_pkg "ttyd"
+check_pkg "luci-app-ttyd"
+check_pkg "minidlna"
+check_pkg "luci-app-minidlna"
+check_pkg "irqbalance"
+check_pkg "luci-app-irqbalance"
+check_pkg "autocore-arm"
 
 echo ""
 echo "[核心功能 (确保没被误删)]"
@@ -259,7 +296,9 @@ grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config
 echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成!"
+echo "  模板: mt7975-ipailna-high-power (237高功率版)"
 echo "  精简: ${REMOVE_COUNT} 个包"
-echo "  内置: daed / EasyTier / ddns-go / samba4 / vnstat2 / nlbwmon / argon"
+echo "  内置: daed / EasyTier / ddns-go / samba4 / vnstat2 / nlbwmon"
+echo "        argon / ttyd / minidlna / irqbalance / autocore"
 echo "  核心: WiFi / 拨号 / 加速 / 防火墙 / USB 存储 / 基础库 全保留"
 echo "============================================================"
