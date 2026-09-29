@@ -138,22 +138,57 @@ jobs:
           # 失败时: 搜错误 + 单线程重编定位
           if [ ${BUILD_EXIT} -ne 0 ]; then
             echo ""
-            echo "=== 编译失败! 搜索错误 ==="
-            for kw in "error:" "make\[.*Error" "Package.*missing" "cannot find" "undefined reference" "fatal:"; do
-              echo "--- $kw ---"
-              grep -in "$kw" /tmp/build.log | tail -15 || true
+            echo "============================================================"
+            echo "  编译失败! 正在诊断..."
+            echo "============================================================"
+
+            echo ""
+            echo "=== 1. 完整日志错误搜索 ==="
+            for kw in "error:" "make\[.*Error" "Package.*missing" "No rule to make" "check-size" \
+                     "cannot find" "undefined reference" "fatal:" "Assertion" "Segmentation fault"; do
+              count=$(grep -ic "$kw" /tmp/build.log 2>/dev/null || echo 0)
+              if [ "$count" -gt 0 ]; then
+                echo "--- $kw ($count 条) ---"
+                grep -in "$kw" /tmp/build.log | tail -10 || true
+                echo ""
+              fi
             done
+
             echo ""
-            echo "=== 磁盘空间 ===" && df -h /
+            echo "=== 2. make 错误行 (最关键) ==="
+            grep -n "make\[.*Error" /tmp/build.log | tail -20 || echo "  未找到"
+
             echo ""
-            echo "=== 单线程重编定位 (只编 package) ==="
-            make -j1 V=s package/compile 2>&1 | tee /tmp/build-error.log | tail -500
+            echo "=== 3. 磁盘空间 ===" && df -h /
+
             echo ""
-            echo "=== 单线程错误汇总 ==="
-            grep -in "error:" /tmp/build-error.log | tail -20 || true
+            echo "=== 4. bin 目录内容 (看看生成了什么) ==="
+            find bin/ -type f 2>/dev/null | head -30 || echo "  bin 目录为空"
+
             echo ""
-            echo "=== 最后 30 行 ==="
-            tail -30 /tmp/build-error.log
+            echo "=== 5. 判断失败阶段 ==="
+            if grep -q "package/compile" /tmp/build.log && grep -q "target/linux" /tmp/build.log; then
+              echo "  包编译完成, 错误在内核/镜像阶段 (target/linux)"
+              echo ""
+              echo "=== 6. 单线程重编 target/linux (内核/镜像) ==="
+              make -j1 V=s target/linux/compile 2>&1 | tee /tmp/build-kernel.log | tail -400
+              echo ""
+              echo "--- 内核编译错误汇总 ---"
+              grep -in "error:\|Error " /tmp/build-kernel.log | tail -20 || echo "  内核编译无 error, 可能在镜像阶段"
+            else
+              echo "  错误在包编译阶段"
+              echo ""
+              echo "=== 6. 单线程重编 package ==="
+              make -j1 V=s package/compile 2>&1 | tee /tmp/build-pkg.log | tail -400
+              echo ""
+              echo "--- 包编译错误汇总 ---"
+              grep -in "error:\|Error " /tmp/build-pkg.log | tail -20 || true
+            fi
+
+            echo ""
+            echo "=== 最后 40 行完整日志 ==="
+            tail -40 /tmp/build.log
+
             exit ${BUILD_EXIT}
           fi
 
