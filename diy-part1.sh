@@ -6,10 +6,12 @@
 #  布局: 506.5MB UBI (移除 NMBM)
 #
 #  功能:
-#    1. 修改 DTS: 内存 2GB + 移除 NMBM + UBI 506.5MB
-#    2. 确保 netcore_n60-pro 设备定义存在
-#    3. 克隆第三方软件包 (EasyTier / argon 主题 / ddns-go 界面)
-#    4. 下载 ddns-go 预编译二进制到 files/ 目录
+#    1. 自动检测 mt7986 / filogic 目标
+#    2. 修改 DTS: 内存 2GB + 移除 NMBM + UBI 506.5MB
+#    3. 确保 netcore_n60-pro 设备定义存在
+#    4. 克隆第三方软件包 (EasyTier / argon / ddns-go 界面)
+#    5. 下载 ddns-go 预编译二进制到 files/ 目录
+#    6. uci-defaults 系统优化
 # ============================================================================
 set -e
 
@@ -19,51 +21,115 @@ echo "  N60 Pro - 512MB 闪存 + 2GB 内存 + 506.5MB 布局"
 echo "============================================================"
 
 # ==================================================================
+# 0. 自动检测目标平台 (mt7986 或 filogic)
+# ==================================================================
+DTS_FILE=""
+FIRMWARE_MK=""
+DTS_BASE="mt7986a-netcore-n60-pro"
+
+# 先找 DTS 文件
+for candidate in \
+    "target/linux/mediatek/dts/mt7986a-netcore-n60-pro.dts" \
+    "target/linux/mediatek/dts/mt7986a-netcore_n60-pro.dts" \
+    "target/linux/mediatek/dts/mt7986b-netcore-n60-pro.dts"; do
+    if [ -f "$candidate" ]; then
+        DTS_FILE="$candidate"
+        DTS_BASE=$(basename "$candidate" .dts)
+        break
+    fi
+done
+
+# 找设备定义 mk 文件
+for candidate in \
+    "target/linux/mediatek/image/mt7986.mk" \
+    "target/linux/mediatek/image/filogic.mk"; do
+    if [ -f "$candidate" ] && grep -q "netcore_n60-pro\|netcore-n60-pro" "$candidate" 2>/dev/null; then
+        FIRMWARE_MK="$candidate"
+        break
+    fi
+done
+
+# 如果 mk 文件里找不到, 就用存在的那个
+if [ -z "$FIRMWARE_MK" ]; then
+    for candidate in \
+        "target/linux/mediatek/image/mt7986.mk" \
+        "target/linux/mediatek/image/filogic.mk"; do
+        if [ -f "$candidate" ]; then
+            FIRMWARE_MK="$candidate"
+            break
+        fi
+    done
+fi
+
+echo ""
+echo "--- 0. 目标平台检测 ---"
+echo "  DTS 文件: $DTS_FILE"
+echo "  固件 MK:  $FIRMWARE_MK"
+echo "  DTS 基础名: $DTS_BASE"
+
+[ -z "$DTS_FILE" ] && echo "[错误] 未找到 DTS 文件" && exit 1
+[ -z "$FIRMWARE_MK" ] && echo "[错误] 未找到固件 mk 文件" && exit 1
+
+# ==================================================================
 # 1. DTS 设备树修改
 # ==================================================================
-DTS_FILE="target/linux/mediatek/dts/mt7986a-netcore-n60-pro.dts"
-
-[ ! -f "$DTS_FILE" ] && echo "[错误] DTS 不存在: $DTS_FILE" && exit 1
-
 echo ""
 echo "--- 1. 修改 DTS 设备树 ---"
 
 # 内存: 512MB -> 2GB
-sed -i 's/0x40000000 0 0x20000000/0x40000000 0 0x80000000/' "$DTS_FILE"
-echo "  [OK] 内存: 2GB"
+if grep -q '0x40000000 0 0x20000000' "$DTS_FILE"; then
+    sed -i 's/0x40000000 0 0x20000000/0x40000000 0 0x80000000/' "$DTS_FILE"
+    echo "  [OK] 内存: 2GB"
+else
+    echo "  [跳过] 内存已是 2GB 或格式不同"
+fi
 
 # 移除 NMBM (联发科坏块管理, 新内核用 UBI 替代)
-sed -i '/mediatek,nmbm;/d; /mediatek,bmt-max-ratio/d; /mediatek,bmt-max-reserved-blocks/d' "$DTS_FILE"
-echo "  [OK] 移除 NMBM"
+NMBM_COUNT=$(grep -c 'nmbm\|bmt-max' "$DTS_FILE" 2>/dev/null || echo 0)
+if [ "$NMBM_COUNT" -gt 0 ]; then
+    sed -i '/mediatek,nmbm;/d; /mediatek,bmt-max-ratio/d; /mediatek,bmt-max-reserved-blocks/d' "$DTS_FILE"
+    echo "  [OK] 移除 NMBM (删除了 $NMBM_COUNT 处)"
+else
+    echo "  [跳过] 未发现 NMBM (可能本来就没有)"
+fi
 
-# UBI 分区: 128MB -> 506.5MB (512MB - bl2/u-boot/factory/fip = 506.5MB)
-sed -i 's/0x0580000 0x7280000/0x0580000 0x1FA80000/' "$DTS_FILE"
-echo "  [OK] UBI 分区: 506.5MB"
+# UBI 分区: 128MB -> 506.5MB
+# 匹配 pattern: <起始地址> 0x7280000 (128MB) -> 0x1FA80000 (506.5MB)
+if grep -q '0x7280000' "$DTS_FILE"; then
+    sed -i 's/0x0580000 0x7280000/0x0580000 0x1FA80000/' "$DTS_FILE"
+    # 也试试其他可能的起始地址
+    grep -q '0x7280000' "$DTS_FILE" && sed -i 's/ 0x7280000/ 0x1FA80000/g' "$DTS_FILE" || true
+    echo "  [OK] UBI 分区: 506.5MB"
+else
+    echo "  [警告] 未找到 128MB UBI 分区, 检查当前分区配置:"
+    grep -i 'ubi\|partition' "$DTS_FILE" | head -10 || true
+fi
 
 # 验证
-echo "  验证: $(grep 'memory@' -A1 "$DTS_FILE" | grep 'reg' | tr -s ' ')"
-echo "  验证: NMBM 残留 $(grep -c 'nmbm' "$DTS_FILE" || echo 0) 处"
+MEM_LINE=$(grep 'memory@' -A1 "$DTS_FILE" | grep 'reg' | tr -s ' ' | head -1)
+NMBM_REMAIN=$(grep -c 'nmbm' "$DTS_FILE" 2>/dev/null || echo 0)
+echo "  验证: 内存 $MEM_LINE"
+echo "  验证: NMBM 残留 $NMBM_REMAIN 处"
 
 # ==================================================================
-# 2. 设备定义 (filogic.mk)
+# 2. 设备定义 (mk 文件)
 # ==================================================================
-FIRMWARE_MK="target/linux/mediatek/image/filogic.mk"
-
 echo ""
 echo "--- 2. 设备定义 ---"
 
-if grep -q "define Device/netcore_n60-pro" "$FIRMWARE_MK" 2>/dev/null; then
-    # 已存在则移除 IMAGE_SIZE 限制 (大分区需要)
-    sed -i '/define Device\/netcore_n60-pro/,/endef/ {/IMAGE_SIZE/d}' "$FIRMWARE_MK"
+if grep -q "Device/netcore_n60-pro\|Device/netcore-n60-pro" "$FIRMWARE_MK" 2>/dev/null; then
+    # 已存在, 移除 IMAGE_SIZE 限制
+    sed -i '/define Device\/netcore_n60-pro/,/endef/ {/IMAGE_SIZE/d}' "$FIRMWARE_MK" 2>/dev/null || true
+    sed -i '/define Device\/netcore-n60-pro/,/endef/ {/IMAGE_SIZE/d}' "$FIRMWARE_MK" 2>/dev/null || true
     echo "  [OK] 设备定义已存在, 已移除 IMAGE_SIZE 限制"
 else
-    # 不存在则添加完整定义
-    cat >> "$FIRMWARE_MK" << 'EOF'
+    # 不存在, 添加完整定义
+    cat >> "$FIRMWARE_MK" << EOF
 
 define Device/netcore_n60-pro
   DEVICE_VENDOR := Netcore
   DEVICE_MODEL := N60 Pro
-  DEVICE_DTS := mt7986a-netcore-n60-pro
+  DEVICE_DTS := $DTS_BASE
   DEVICE_DTS_DIR := ../dts
   DEVICE_PACKAGES := kmod-mt7915e kmod-mt7986-firmware mt7986-wo-firmware
   UBINIZE_OPTS := -E 5
@@ -76,7 +142,7 @@ define Device/netcore_n60-pro
 endef
 TARGET_DEVICES += netcore_n60-pro
 EOF
-    echo "  [OK] 设备定义已添加"
+    echo "  [OK] 设备定义已添加到 $FIRMWARE_MK"
 fi
 
 # ==================================================================
@@ -85,8 +151,6 @@ fi
 echo ""
 echo "--- 3. 克隆第三方软件包 ---"
 
-# 定义要克隆的仓库: 目标目录=仓库地址
-# 使用数组遍历, 避免重复代码
 declare -A REPOS=(
     ["package/luci-app-easytier"]="https://github.com/EasyTier/luci-app-easytier.git"
     ["package/luci-theme-argon"]="https://github.com/jerrykuku/luci-theme-argon.git"
@@ -104,49 +168,56 @@ for dir in "${!REPOS[@]}"; do
 done
 
 # ==================================================================
-# 4. ddns-go - 下载预编译二进制到 files/ 目录
-#    (不用 OpenWrt 包系统, 直接放二进制最可靠, 避免 Go 交叉编译问题)
+# 4. ddns-go - 移除 ddns-go 子包, 用 files/ 方式放二进制
 # ==================================================================
 echo ""
 echo "--- 4. ddns-go 主程序 ---"
 
-# files/ 目录是 OpenWrt 的"直接覆盖层", 里面的文件会原样放到固件根文件系统
-mkdir -p files/usr/bin files/etc/init.d
-
-# 自动获取最新版本
-DDNS_VER=""
-API_JSON=$(curl -fsSL --connect-timeout 10 "https://api.github.com/repos/jeessy2/ddns-go/releases/latest" 2>/dev/null) || true
-if [ -n "$API_JSON" ]; then
-    DDNS_VER=$(echo "$API_JSON" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name":\s*"\([^"]*\)".*/\1/' | tr -d ' ')
+# 如果 sirpdboy 的仓库里有 ddns-go/ 子包, 删掉它 (避免编译失败)
+DDNS_GO_SUBPKG="package/luci-app-ddns-go/ddns-go"
+if [ -d "$DDNS_GO_SUBPKG" ]; then
+    rm -rf "$DDNS_GO_SUBPKG"
+    echo "  [OK] 移除 ddns-go 源码子包 (改用预编译二进制)"
 fi
 
-# API 失败用默认版本兜底
+# files/ 目录: 直接覆盖到固件根文件系统
+mkdir -p files/usr/bin files/etc/init.d
+
+# 从 GitHub 获取最新版本号
+DDNS_VER=""
+if command -v curl &>/dev/null; then
+    DDNS_VER=$(curl -s --max-time 10 "https://api.github.com/repos/jeessy2/ddns-go/releases/latest" 2>/dev/null | grep -o '"tag_name": *"[^"]*"' | head -1 | sed 's/.*"tag_name": *"//;s/"//')
+fi
+
+# API 失败用默认值
 if [ -z "$DDNS_VER" ]; then
     DDNS_VER="v6.17.7"
-    echo "  版本获取失败, 使用默认: $DDNS_VER"
+    echo "  (API 获取失败, 使用默认版本 $DDNS_VER)"
 else
     echo "  最新版本: $DDNS_VER"
 fi
 
-# 文件名不带 v, URL 路径带 v
+# 确保版本号以 v 开头
+case "$DDNS_VER" in v*) ;; *) DDNS_VER="v${DDNS_VER}" ;; esac
+
+# 文件名不带 v (官方命名格式: ddns-go_6.17.7_linux_arm64.tar.gz)
 VER_NO_V="${DDNS_VER#v}"
 DL_FILE="ddns-go_${VER_NO_V}_linux_arm64.tar.gz"
 DL_URL="https://github.com/jeessy2/ddns-go/releases/download/${DDNS_VER}/${DL_FILE}"
 
-# 下载 (失败不中断编译, 只是固件里没有 ddns-go)
 if [ ! -f "files/usr/bin/ddns-go" ]; then
-    echo "  下载中..."
-    curl -fSL --connect-timeout 20 --retry 2 -o "/tmp/$DL_FILE" "$DL_URL" || true
-    if [ -s "/tmp/$DL_FILE" ]; then
-        tar -xzf "/tmp/$DL_FILE" -C /tmp/ ddns-go 2>/dev/null
-        if [ -f "/tmp/ddns-go" ]; then
-            cp "/tmp/ddns-go" files/usr/bin/ddns-go
+    echo "  下载: $DL_URL"
+    if curl -L --max-time 60 -o "/tmp/$DL_FILE" "$DL_URL" 2>/dev/null; then
+        mkdir -p /tmp/ddns-go
+        tar -xzf "/tmp/$DL_FILE" -C /tmp/ddns-go 2>/dev/null || true
+        if [ -f "/tmp/ddns-go/ddns-go" ]; then
+            cp "/tmp/ddns-go/ddns-go" files/usr/bin/ddns-go
             chmod +x files/usr/bin/ddns-go
             echo "  [OK] 已放入 files/usr/bin/ddns-go"
         else
             echo "  [警告] 解压后未找到二进制"
         fi
-        rm -f "/tmp/$DL_FILE" "/tmp/ddns-go"
+        rm -rf "/tmp/$DL_FILE" "/tmp/ddns-go"
     else
         echo "  [警告] 下载失败, 固件将不包含 ddns-go"
     fi
@@ -154,7 +225,7 @@ else
     echo "  [跳过] 已存在"
 fi
 
-# init 启动脚本 (procd 托管, 开机自启, 默认监听 9876)
+# init 启动脚本
 if [ ! -f "files/etc/init.d/ddns-go" ]; then
     cat > files/etc/init.d/ddns-go << 'INIT'
 #!/bin/sh /etc/rc.common
@@ -177,40 +248,10 @@ INIT
 fi
 
 # ==================================================================
-# 5. ddns-go - 处理 LuCI 界面
-#    sirpdboy 的仓库里有 ddns-go 子包(尝试源码编译), 需要删掉它
-#    同时移除 Makefile 里对 ddns-go 包的依赖
+# 5. uci-defaults 系统优化
 # ==================================================================
 echo ""
-echo "--- 5. ddns-go LuCI 界面 ---"
-
-DDNS_LUCI_DIR="package/luci-app-ddns-go"
-
-if [ -d "$DDNS_LUCI_DIR" ]; then
-    # 删除 ddns-go 子包 (我们已经在 files/ 里放了二进制)
-    if [ -d "$DDNS_LUCI_DIR/ddns-go" ]; then
-        rm -rf "$DDNS_LUCI_DIR/ddns-go"
-        echo "  [OK] 已删除 ddns-go 子包"
-    fi
-
-    # 移除 Makefile 中的 +ddns-go 依赖
-    MK="$DDNS_LUCI_DIR/Makefile"
-    if [ -f "$MK" ]; then
-        sed -i 's/+ddns-go//g; s/DEPENDS:= /DEPENDS:=/; s/  */ /g' "$MK"
-        echo "  [OK] 已移除 ddns-go 包依赖"
-    fi
-else
-    echo "  [跳过] luci-app-ddns-go 不存在"
-fi
-
-# ==================================================================
-# 6. uci-defaults 优化脚本 (刷入后自动执行一次)
-#    - WiFi 高功率 (国家码 US + 最大功率)
-#    - BBR 拥塞控制
-#    - Samba4 优化
-# ==================================================================
-echo ""
-echo "--- 6. uci-defaults 系统优化 ---"
+echo "--- 5. uci-defaults 系统优化 ---"
 
 mkdir -p files/etc/uci-defaults
 
@@ -231,17 +272,17 @@ if uci get samba4.@samba4[0] >/dev/null 2>&1; then
     uci set samba4.@samba4[0].allow_guest='1'
 fi
 
-# --- 3. ttyd 免登录 (内网使用, 注意安全) ---
+# --- 3. ttyd 免登录 (仅限 LAN 口) ---
 if uci get ttyd.@ttyd[0] >/dev/null 2>&1; then
     uci set ttyd.@ttyd[0].interface='@lan'
     uci set ttyd.@ttyd[0].command='/bin/login -f root'
 fi
 
-# --- 4. 默认 LAN IP 修改为 10.10.6.1 ---
+# --- 4. 默认 LAN IP ---
 uci set network.lan.ipaddr='10.10.6.1'
 uci set network.lan.netmask='255.255.255.0'
 
-# --- 5. 提交所有修改 ---
+# --- 5. 提交 ---
 uci commit system
 uci commit samba4 2>/dev/null || true
 uci commit ttyd 2>/dev/null || true
@@ -253,7 +294,7 @@ sysctl -p >/dev/null 2>&1 || true
 exit 0
 UCIEOF
 chmod +x files/etc/uci-defaults/99-custom-settings
-echo "  [OK] uci-defaults 优化脚本已创建 (BBR + Samba优化 + ttyd免登录 + LAN IP 10.10.6.1)"
+echo "  [OK] uci-defaults 优化脚本已创建"
 
 # ==================================================================
 # 完成
