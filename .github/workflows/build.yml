@@ -41,6 +41,7 @@ jobs:
         run: |
           echo "=== 清理前 ===" && df -h /
 
+          # 删预装大块头 (Android SDK ~10GB, .NET ~2GB, Haskell ~2.5GB 等)
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           sudo rm -rf /usr/local/share/boost /usr/share/swift
           sudo rm -rf /opt/google /opt/az /opt/microsoft/powershell
@@ -48,9 +49,16 @@ jobs:
           sudo rm -rf /opt/hostedtoolcache/PyPy /opt/hostedtoolcache/CodeQL
           sudo rm -rf /opt/hostedtoolcache/julia /opt/hostedtoolcache/Kotlin
           sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name "3.*" -exec rm -rf {} + 2>/dev/null || true
+          # 删 Docker 镜像缓存 (~3-5GB)
           docker system prune -af --volumes 2>/dev/null || true
+          # 删 apt 缓存
           sudo apt-get clean && sudo apt-get autoremove -y
-          sudo rm -rf /tmp/* /var/log/*
+          sudo rm -rf /tmp/* /var/log/* /var/cache/apt/*
+          # 删不需要的 apt 包 (节省 ~500MB)
+          sudo apt-get remove -y firefox '*cpp*' '*fortran*' '*objc*' 2>/dev/null || true
+          sudo apt-get autoremove -y 2>/dev/null || true
+          # 删 npm / snap / IE 中间件
+          sudo rm -rf /usr/local/share/npm /snap /usr/local/share/nvm 2>/dev/null || true
 
           echo "=== 清理后 ===" && df -h /
 
@@ -83,6 +91,9 @@ jobs:
           git clone --depth 1 --single-branch -b ${{ env.REPO_BRANCH }} ${{ env.REPO_URL }} openwrt
           cd openwrt
           git log -1 --format="提交: %H%n作者: %an%n日期: %ad%n信息: %s"
+          # 删 .git 目录节省 ~500MB 磁盘空间 (编译不需要 git 历史)
+          rm -rf .git
+          echo "=== 删 .git 后 ===" && df -h /
 
       # ============================================================
       # 5. DIY Part 1 - 修改源码 (DTS / 设备定义 / 克隆包)
@@ -100,6 +111,9 @@ jobs:
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+          # 删 feeds 的 .git 目录 (编译不需要)
+          find feeds -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
+          echo "=== 清理 feeds 后 ===" && df -h /
 
       # ============================================================
       # 7. DIY Part 2 - 生成 .config (精简 + 添加包)
@@ -116,6 +130,10 @@ jobs:
         run: |
           cd openwrt
           make download -j$(nproc) V=w 2>&1 | tail -20
+          # 清理已下载的大源码包 (已解压到 build_dir, dl/ 里的 tar 不再需要)
+          # 只保留小文件 (<5MB), 删除大 tar.gz/zip 节省空间
+          find dl/ -type f \( -name "*.tar.gz" -o -name "*.tar.xz" -o -name "*.tar.bz2" -o -name "*.zip" -o -name "*.tar.zst" \) -size +5M -exec rm -f {} + 2>/dev/null || true
+          echo "=== 清理 dl/ 后 ===" && df -h /
 
       # ============================================================
       # 9. 编译固件
