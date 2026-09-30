@@ -35,31 +35,22 @@ jobs:
         uses: actions/checkout@v5
 
       # ============================================================
-      # 2. 释放磁盘空间 (删 Android SDK / dotnet 等预装垃圾)
+      # 2. 释放磁盘空间
       # ============================================================
       - name: Free disk space
         run: |
           echo "=== 清理前 ===" && df -h /
-
-          # 删预装大块头 (Android SDK ~10GB, .NET ~2GB, Haskell ~2.5GB 等)
           sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
           sudo rm -rf /usr/local/share/boost /usr/share/swift
           sudo rm -rf /opt/google /opt/az /opt/microsoft/powershell
-          sudo rm -rf /opt/hostedtoolcache/go /opt/hostedtoolcache/Ruby
-          sudo rm -rf /opt/hostedtoolcache/PyPy /opt/hostedtoolcache/CodeQL
-          sudo rm -rf /opt/hostedtoolcache/julia /opt/hostedtoolcache/Kotlin
+          sudo rm -rf /opt/hostedtoolcache/{go,Ruby,PyPy,CodeQL,julia,Kotlin}
           sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name "3.*" -exec rm -rf {} + 2>/dev/null || true
-          # 删 Docker 镜像缓存 (~3-5GB)
           docker system prune -af --volumes 2>/dev/null || true
-          # 删 apt 缓存
           sudo apt-get clean && sudo apt-get autoremove -y
           sudo rm -rf /tmp/* /var/log/* /var/cache/apt/*
-          # 删不需要的 apt 包 (节省 ~500MB)
           sudo apt-get remove -y firefox '*cpp*' '*fortran*' '*objc*' 2>/dev/null || true
           sudo apt-get autoremove -y 2>/dev/null || true
-          # 删 npm / snap / IE 中间件
           sudo rm -rf /usr/local/share/npm /snap /usr/local/share/nvm 2>/dev/null || true
-
           echo "=== 清理后 ===" && df -h /
 
       # ============================================================
@@ -84,139 +75,103 @@ jobs:
             texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
 
       # ============================================================
-      # 4. 克隆 ImmortalWrt 源码
+      # 4. 克隆源码 + 删 .git 省空间
       # ============================================================
       - name: Clone source
         run: |
           git clone --depth 1 --single-branch -b ${{ env.REPO_BRANCH }} ${{ env.REPO_URL }} openwrt
           cd openwrt
           git log -1 --format="提交: %H%n作者: %an%n日期: %ad%n信息: %s"
-          # 删 .git 目录节省 ~500MB 磁盘空间 (编译不需要 git 历史)
           rm -rf .git
           echo "=== 删 .git 后 ===" && df -h /
 
       # ============================================================
-      # 5. DIY Part 1 - 修改源码 (DTS / 设备定义 / 克隆包)
+      # 5. DIY Part 1 - 修改源码 (DTS / 设备定义 / 克隆包 / ddns-go / uci-defaults)
       # ============================================================
-      - name: Run DIY Part 1 (source modifications)
+      - name: Run DIY Part 1
         run: |
           cd openwrt
           bash $GITHUB_WORKSPACE/diy-part1.sh
 
       # ============================================================
-      # 6. 更新和安装 feeds
+      # 6. 更新和安装 feeds + 删 .git
       # ============================================================
       - name: Update & install feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # 删 feeds 的 .git 目录 (编译不需要)
           find feeds -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
           echo "=== 清理 feeds 后 ===" && df -h /
 
       # ============================================================
       # 7. DIY Part 2 - 生成 .config (精简 + 添加包)
       # ============================================================
-      - name: Run DIY Part 2 (generate .config)
+      - name: Run DIY Part 2
         run: |
           cd openwrt
           bash $GITHUB_WORKSPACE/diy-part2.sh
 
       # ============================================================
-      # 8. 下载源码包 (先下载好, 编译时不用等)
+      # 8. 下载源码包 + 清理大 tar
       # ============================================================
       - name: Download sources
         run: |
           cd openwrt
           make download -j$(nproc) V=w 2>&1 | tail -20
-          # 清理已下载的大源码包 (已解压到 build_dir, dl/ 里的 tar 不再需要)
-          # 只保留小文件 (<5MB), 删除大 tar.gz/zip 节省空间
           find dl/ -type f \( -name "*.tar.gz" -o -name "*.tar.xz" -o -name "*.tar.bz2" -o -name "*.zip" -o -name "*.tar.zst" \) -size +5M -exec rm -f {} + 2>/dev/null || true
           echo "=== 清理 dl/ 后 ===" && df -h /
 
       # ============================================================
-      # 9. 编译固件
-      #    - 多线程编译, 失败时自动单线程重编定位错误
-      #    - 完整日志保存在 /tmp/build.log
+      # 9. 编译固件 (失败时自动诊断)
       # ============================================================
       - name: Build firmware
         id: Build
         run: |
           cd openwrt
-
           echo "=== 开始编译 ==="
-          set +e  # 关闭 errexit, 失败后继续执行诊断
+          set +e
 
-          # 多线程编译, 同时保存完整日志
           make -j$(nproc) V=w 2>&1 | tee /tmp/build.log | tail -300
           BUILD_EXIT=${PIPESTATUS[0]}
           echo "退出码: ${BUILD_EXIT}"
 
-          # 失败时: 搜错误 + 单线程重编定位
           if [ ${BUILD_EXIT} -ne 0 ]; then
             echo ""
-            echo "============================================================"
-            echo "  编译失败! 正在诊断..."
-            echo "============================================================"
+            echo "=== 编译失败! 诊断中 ==="
 
-            echo ""
-            echo "=== 1. 完整日志错误搜索 ==="
-            for kw in "error:" "make\[.*Error" "Package.*missing" "No rule to make" "check-size" \
-                     "cannot find" "undefined reference" "fatal:" "Assertion" "Segmentation fault"; do
+            # 1. 搜错误关键词
+            for kw in "error:" "make\[.*Error" "Package.*missing" "No rule to make" \
+                     "cannot find" "undefined reference" "fatal:" "No space left"; do
               count=$(grep -ic "$kw" /tmp/build.log 2>/dev/null || echo 0)
               if [ "$count" -gt 0 ]; then
                 echo "--- $kw ($count 条) ---"
-                grep -in "$kw" /tmp/build.log | tail -10 || true
-                echo ""
+                grep -in "$kw" /tmp/build.log | tail -10
               fi
             done
 
-            echo ""
-            echo "=== 2. make 错误行 (最关键) ==="
-            grep -n "make\[.*Error" /tmp/build.log | tail -20 || echo "  未找到"
+            # 2. 磁盘空间
+            echo "=== 磁盘空间 ===" && df -h /
 
-            echo ""
-            echo "=== 3. 磁盘空间 ===" && df -h /
-
-            echo ""
-            echo "=== 4. bin 目录内容 (看看生成了什么) ==="
-            find bin/ -type f 2>/dev/null | head -30 || echo "  bin 目录为空"
-
-            echo ""
-            echo "=== 5. 判断失败阶段 ==="
-            if grep -q "package/compile" /tmp/build.log && grep -q "target/linux" /tmp/build.log; then
-              echo "  包编译完成, 错误在内核/镜像阶段 (target/linux)"
-              echo ""
-              echo "=== 6. 单线程重编 target/linux (内核/镜像) ==="
+            # 3. 判断失败阶段并单线程重编
+            if grep -q "target/linux" /tmp/build.log; then
+              echo "=== 单线程重编内核 ==="
               make -j1 V=s target/linux/compile 2>&1 | tee /tmp/build-kernel.log | tail -400
-              echo ""
-              echo "--- 内核编译错误汇总 ---"
-              grep -in "error:\|Error " /tmp/build-kernel.log | tail -20 || echo "  内核编译无 error, 可能在镜像阶段"
+              grep -in "error:" /tmp/build-kernel.log | tail -20
             else
-              echo "  错误在包编译阶段"
-              echo ""
-              echo "=== 6. 单线程重编 package ==="
+              echo "=== 单线程重编包 ==="
               make -j1 V=s package/compile 2>&1 | tee /tmp/build-pkg.log | tail -400
-              echo ""
-              echo "--- 包编译错误汇总 ---"
-              grep -in "error:\|Error " /tmp/build-pkg.log | tail -20 || true
+              grep -in "error:" /tmp/build-pkg.log | tail -20
             fi
-
-            echo ""
-            echo "=== 最后 40 行完整日志 ==="
-            tail -40 /tmp/build.log
 
             exit ${BUILD_EXIT}
           fi
 
-          echo ""
-          echo "=== 编译成功! 固件文件 ==="
+          echo "=== 编译成功 ==="
           find bin/ -name "*n60*" -type f 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到"
 
       # ============================================================
       # 10. 提取版本号 + 重命名固件
-      #     只保留 sysupgrade.bin, 去掉 medatek-filogic
       # ============================================================
       - name: Rename firmware
         if: success()
@@ -227,41 +182,30 @@ jobs:
 
           echo "=== 提取版本号 ==="
 
-          # 有效版本格式: 24.10.0 / 24.10-SNAPSHOT / 24.10
           is_valid_version() {
               echo "$1" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9]+)?$'
           }
 
-          # 方法1: 从 .config 提取 CONFIG_VERSION_NUMBER
-          if [ -f .config ]; then
-            v=$(grep -m1 '^CONFIG_VERSION_NUMBER=' .config 2>/dev/null | sed 's/^CONFIG_VERSION_NUMBER=//; s/"//g; s/[[:space:]]//g')
-            if is_valid_version "$v"; then VERSION="$v"; echo "  方法1 (.config): $VERSION"; fi
-          fi
+          # 方法1: 用 make 展开 version.mk (能正确处理 $(call qstrip,...))
+          v=$(make -s --no-print-directory --eval='include include/version.mk' --eval='v:;@echo $(VERSION_NUMBER)' v 2>/dev/null | tr -d '[:space:][:cntrl:]')
+          if is_valid_version "$v"; then VERSION="$v"; echo "  方法1 (make): $VERSION"; fi
 
-          # 方法2: 用 make 展开 version.mk 的变量
-          if ! is_valid_version "$VERSION"; then
-            v=$(make -s --no-print-directory --eval='include include/version.mk' --eval='v:;@echo $(VERSION_NUMBER)' v 2>/dev/null | tr -d '[:space:][:cntrl:]')
-            if is_valid_version "$v"; then VERSION="$v"; echo "  方法2 (make): $VERSION"; fi
-          fi
-
-          # 方法3: 从固件文件名提取
+          # 方法2: 从固件文件名提取
           if ! is_valid_version "$VERSION"; then
             f=$(find "$FW_DIR" -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
             if [ -n "$f" ]; then
               v=$(basename "$f" | sed -n 's/^immortalwrt-\([^-]*-[^-]*\)-.*/\1/p')
-              if is_valid_version "$v"; then VERSION="$v"; echo "  方法3 (文件名): $VERSION"; fi
+              if is_valid_version "$v"; then VERSION="$v"; echo "  方法2 (文件名): $VERSION"; fi
             fi
           fi
 
-          # 方法4: 默认值兜底
+          # 方法3: 默认值
           if ! is_valid_version "$VERSION"; then
             VERSION="24.10-SNAPSHOT"
-            echo "  方法4 (默认): $VERSION"
+            echo "  方法3 (默认): $VERSION"
           fi
 
           echo "  最终版本: ${VERSION}"
-
-          # 日期和 tag
           DATE=$(date +%Y%m%d)
           TAG="v${VERSION}-${DATE}"
           echo "Tag: ${TAG}"
@@ -270,7 +214,7 @@ jobs:
           echo "RELEASE_DATE=${DATE}" >> $GITHUB_ENV
           echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
 
-          # --- 只复制 sysupgrade.bin 并重命名 (去掉 medatek-filogic) ---
+          # 复制 sysupgrade.bin 并重命名
           mkdir -p /tmp/firmware
           SYSUPGRADE=$(find "$FW_DIR" -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
 
@@ -282,7 +226,6 @@ jobs:
 
           NEW_NAME="immortalwrt-${VERSION}-${DATE}-netcore_n60-pro-506.5MB-squashfs-sysupgrade.bin"
           cp "$SYSUPGRADE" "/tmp/firmware/${NEW_NAME}"
-          echo ""
           echo "=== 固件 ==="
           ls -lh /tmp/firmware/
 
@@ -298,11 +241,6 @@ jobs:
           body: |
             ## ImmortalWrt 固件 - 磊科 N60 Pro
 
-            ### 登录信息
-            - 管理地址: **http://10.10.6.1**
-            - 默认账号: `root`
-            - 默认密码: **无** (首次登录请直接点登录, 然后设置密码)
-
             ### 硬件
             - 闪存: 512MB (硬改)
             - 内存: 2GB (硬改)
@@ -317,24 +255,14 @@ jobs:
             - 共享: Samba4 + CIFS 挂载
             - 流量: vnstat2 (WAN) + nlbwmon (内网设备)
             - 主题: luci-theme-argon
-            - 工具: ttyd (网页终端,免登录) + minidlna (DLNA) + irqbalance + autocore
-
-            ### 系统优化 (uci-defaults 自动执行)
-            - 拥塞控制: BBR (替代默认 CUBIC)
-            - Samba4: 多通道 + 访客访问
-            - ttyd: 免登录 (仅限 LAN 口)
-            - 默认 IP: 10.10.6.1
+            - 工具: ttyd (网页终端,免登录) + autocore
 
             ### 精简项
-            - 移除 ssr-plus (daed 替代)
-            - 移除 wrtbwmon + statistics (vnstat2+nlbwmon 替代)
-            - 移除 diag-core (命令行仍可用)
-            - 移除 argon-config (主题用默认即可)
-            - 移除 bootstrap-mod (argon 替代)
+            - 移除 ssr-plus / wrtbwmon / diag-core / argon-config
             - 移除调试工具 / IPv6 用户态 / zram / ebtables 等
 
             ### 刷入方法
-            1. 断电 → 按住重置或Mesh键 → 通电 → 电源LED慢闪4次快闪2次 → 松手
+            1. 断电 → 按住重置或Mesh键 → 通电 → 电源LED快闪4次慢闪2次（U-Bboot2025-WildEdition） → 松手
             2. 浏览器访问 http://10.10.10.1
             3. 选 506.5MB 分区表, 上传 sysupgrade.bin
           files: /tmp/firmware/*.bin
@@ -353,7 +281,6 @@ jobs:
           while read -r tag; do
             [ -n "$tag" ] && echo "删除: $tag" && gh release delete "$tag" --yes --cleanup-tag || true
           done
-          echo "=== 完成 ==="
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -367,13 +294,14 @@ jobs:
           name: Build-Logs-Failed
           path: |
             /tmp/build.log
-            /tmp/build-error.log
+            /tmp/build-kernel.log
+            /tmp/build-pkg.log
             openwrt/.config
           retention-days: 7
           if-no-files-found: warn
 
       # ============================================================
-      # 14. 成功时也上传到 Artifacts (备份)
+      # 14. 成功时上传到 Artifacts (备份)
       # ============================================================
       - name: Upload firmware to Artifacts (backup)
         if: always() && steps.Build.outcome == 'success'
