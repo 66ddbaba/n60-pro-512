@@ -7,7 +7,7 @@
 #    1. 修改 DTS 设备树 (告诉内核真实硬件配置)
 #    2. 确保设备定义存在 (让编译系统认识 N60 Pro)
 #    3. 克隆第三方软件包 (官方 feeds 里没有的)
-#    4. 准备二进制文件 (ddns-go / mtk-cpufreq)
+#    4. 准备二进制文件 (mtk-cpufreq)
 #    5. 准备系统配置 (BBR / cpuinfo / uci-defaults)
 #
 #  【执行时机】
@@ -187,27 +187,28 @@ EOF
 fi
 
 # ============================================================================
-# 4. 克隆第三方软件包 (全部独立小仓库)
+# 4. 克隆第三方软件包
 # ============================================================================
-# 【为什么不用大的聚合仓库 (sirpdboy / kiddin9)?】
-# 这两个大仓库都因为 DMCA 投诉被 GitHub 下架了 (2026 年初)。
-# 所以我们改成每个需要的包单独克隆对应的独立小仓库:
-#   1. 小仓库体积小, 克隆快, 不容易失败
-#   2. 独立项目不容易被 DMCA (大仓库因为某个包牵连整个下架)
-#   3. 3 次重试 + 镜像回退, 更稳
+# 【默认 feed 里已经有的, 不用克隆!】
+# padavanonly 的 immortalwrt-mt798x-6.6 仓库里, 默认 packages + luci feed
+# 已经包含了大部分常用包, 直接在 diy-part2.sh 里选上就行:
+#   - daed / luci-app-daed        (eBPF 代理)
+#   - ddns-go / luci-app-ddns-go  (动态域名)
+#   - samba4 / luci-app-samba4    (文件共享)
+#   - cifs-utils / luci-app-cifs-mount (CIFS 挂载)
+#   - wsdd2                       (网络发现)
+#   - vnstat2 / luci-app-vnstat2  (流量统计)
+#   - nlbwmon / luci-app-nlbwmon  (设备流量)
+#   - ttyd / luci-app-ttyd        (网页终端)
+#   - luci-theme-argon            (argon 主题)
+#
+# 【真正需要克隆的只有 1 个】
+#   - luci-app-easytier (EasyTier 的 LuCI 界面, feed 里没有)
+#     easytier 主程序也在默认 feed 里, 但界面没有
 #
 # 【镜像回退机制】
 #   第 1-2 次: 直连 GitHub
 #   第 3 次:   走 ghproxy 镜像 (国内 CDN, 对付 GitHub 网络抽风)
-#
-# 【daed 是什么?】
-# 基于 eBPF 的高性能透明代理, 是 dae 项目的衍生版。
-# QiuSimons/luci-app-daed 这个仓库同时包含 daed 主程序和 LuCI 界面,
-# 作者是 dae 核心贡献者, 是社区最权威的 OpenWrt 编译方式。
-#
-# 【为什么没有 netspeedtest?】
-# netspeedtest 是 DMCA 投诉的源头 (导致 sirpdboy / kiddin9 大仓库下架),
-# 而且测速用电脑直接测更准确, 路由器上跑测速反而不准 (CPU 瓶颈影响结果)。
 #
 # 【--depth 1 的作用】
 # 只克隆最新一次提交, 不下载完整历史, 省时间省空间。
@@ -250,108 +251,12 @@ clone_repo() {
     return 1
 }
 
-# ---- 4.1 dae (核心代理, 必需, 失败直接退出) ----
-# QiuSimons/luci-app-daed 仓库同时包含 dae 主程序和 luci-app-daed 界面
-# 注意: 要克隆到 package/dae/ 目录 (这是仓库作者约定的路径)
-#       主程序包名叫 dae, 界面包名叫 luci-app-daed, 别搞混了
-if clone_repo "package/dae" "https://github.com/QiuSimons/luci-app-daed.git" "master"; then
-    echo "       (含 dae 主程序 + luci-app-daed 界面)"
-else
-    echo ""
-    echo "  [错误] dae 仓库克隆失败!"
-    exit 1
-fi
-
-# ---- 4.2 其他独立仓库 ----
+# ---- 4.1 独立仓库 ----
+# 只有 feed 里没有的才需要克隆
 clone_repo "package/luci-app-easytier" "https://github.com/EasyTier/luci-app-easytier.git" || true
-clone_repo "package/luci-theme-argon" "https://github.com/jerrykuku/luci-theme-argon.git" || true
 
 # ============================================================================
-# 5. ddns-go 预编译二进制 (files/ 方式)
-# ============================================================================
-# 【为什么用 files/ 方式而不是编译?】
-#   ddns-go 是 Go 语言写的单文件程序, 从源码交叉编译需要:
-#     - 完整的 Go 工具链 + OpenWrt SDK 适配
-#     - 处理各种依赖和架构问题
-#   但它就是个静态编译的单文件二进制, 直接下载官方 arm64 版本
-#   放到 files/ 目录里, 效果完全一样, 还省了编译时间和出错概率。
-#
-# 【自动获取最新版本】
-# 从 GitHub API 查最新 release 版本号, 自动下载对应版本。
-# 这样以后 ddns-go 更新了, 重新编译就能自动用上最新版, 不用手动改脚本。
-# ============================================================================
-echo ""
-echo "--- 5. ddns-go 二进制 ---"
-
-# 确保 files/ 下的目标目录存在
-# files/usr/bin/    → 固件里的 /usr/bin/       (放二进制)
-# files/etc/init.d/ → 固件里的 /etc/init.d/    (放启动脚本)
-# files/etc/uci-defaults/ → 首次启动执行的脚本
-mkdir -p files/usr/bin files/etc/init.d files/etc/uci-defaults
-
-# 从 GitHub API 获取最新版本号
-DDNS_VER=$(curl -s --max-time 10 "https://api.github.com/repos/jeessy2/ddns-go/releases/latest" 2>/dev/null \
-    | grep -o '"tag_name": *"[^"]*"' | head -1 \
-    | sed 's/.*"tag_name": *"//;s/"//')
-
-# 获取失败就用默认版本兜底 (避免网络问题导致编译失败)
-[ -z "$DDNS_VER" ] && DDNS_VER="v6.17.7"
-# 确保版本号以 v 开头
-case "$DDNS_VER" in v*) ;; *) DDNS_VER="v${DDNS_VER}" ;; esac
-
-VER_NO_V="${DDNS_VER#v}"  # 去掉 v 前缀用于文件名
-# 下载地址示例: https://github.com/jeessy2/ddns-go/releases/download/v6.17.7/ddns-go_6.17.7_linux_arm64.tar.gz
-DL_URL="https://github.com/jeessy2/ddns-go/releases/download/${DDNS_VER}/ddns-go_${VER_NO_V}_linux_arm64.tar.gz"
-
-echo "  版本: $DDNS_VER"
-
-# 下载并解压 (如果还没下载过)
-if [ ! -f "files/usr/bin/ddns-go" ]; then
-    if curl -L --max-time 60 -o "/tmp/ddns-go.tar.gz" "$DL_URL" 2>/dev/null; then
-        mkdir -p /tmp/ddns-go
-        tar -xzf "/tmp/ddns-go.tar.gz" -C /tmp/ddns-go 2>/dev/null || true
-        if [ -f "/tmp/ddns-go/ddns-go" ]; then
-            cp /tmp/ddns-go/ddns-go files/usr/bin/ddns-go
-            chmod +x files/usr/bin/ddns-go
-            echo "  [OK] 二进制 → files/usr/bin/ddns-go"
-        else
-            echo "  [警告] 解压后找不到 ddns-go"
-        fi
-        rm -rf /tmp/ddns-go.tar.gz /tmp/ddns-go
-    else
-        echo "  [警告] 下载失败 (网络问题? 不影响编译, 只是固件里没有 ddns-go)"
-    fi
-else
-    echo "  [跳过] 二进制已存在"
-fi
-
-# 【启动脚本】
-# OpenWrt 用 procd 进程管理器托管服务, 支持崩溃自动重启、日志等。
-# 脚本放在 /etc/init.d/ 下, 用 START=99 表示启动顺序 (数字越大越晚启动)。
-# ddns-go 需要网络, 所以设成 99, 等网络起来了再启动。
-cat > files/etc/init.d/ddns-go << 'INIT'
-#!/bin/sh /etc/rc.common
-START=99          # 启动顺序 (99 = 很晚, 等网络就绪)
-STOP=10           # 停止顺序
-USE_PROCD=1       # 使用 procd 进程管理器
-PROG=/usr/bin/ddns-go
-
-start_service() {
-    procd_open_instance
-    # -l :9876   → 监听 9876 端口 (Web 管理界面)
-    # -f 300     → 每 300 秒 (5分钟) 检查一次 IP 变化
-    procd_set_param command $PROG -l :9876 -f 300
-    procd_set_param respawn       # 崩溃自动重启
-    procd_set_param stdout 1      # 标准输出写入日志
-    procd_set_param stderr 1      # 错误输出写入日志
-    procd_close_instance
-}
-INIT
-chmod +x files/etc/init.d/ddns-go
-echo "  [OK] init 启动脚本 (procd 托管, 端口 9876)"
-
-# ============================================================================
-# 6. 系统优化 (BBR + CPU频率 + 默认设置)
+# 5. 系统优化 (BBR + CPU频率 + 默认设置)
 # ============================================================================
 # 【这一节做什么】
 # 全部通过 files/ 目录放进固件, 都是配置文件和小脚本:
@@ -363,7 +268,7 @@ echo ""
 echo "--- 6. 系统优化 ---"
 
 # ----------------------------------------------------------------------------
-# 6.1 BBR 拥塞控制
+# 5.1 BBR 拥塞控制
 # ----------------------------------------------------------------------------
 # 【BBR vs CUBIC】
 # 默认 OpenWrt 用 CUBIC 拥塞控制算法, 这是 Linux 默认的。
@@ -388,7 +293,7 @@ EOF
 echo "  [OK] BBR 拥塞控制 (modules.d + sysctl.d)"
 
 # ----------------------------------------------------------------------------
-# 6.2 CPU 频率显示 (mtk-cpufreq + cpuinfo 脚本)
+# 5.2 CPU 频率显示 (mtk-cpufreq + cpuinfo 脚本)
 # ----------------------------------------------------------------------------
 # 【为什么 LuCI 不显示 CPU 频率?】
 # MT7986 内核没有 cpufreq 驱动 (联发科没开源), 所以标准的 cpuinfo 脚本
@@ -464,7 +369,7 @@ chmod +x files/sbin/cpuinfo
 echo "  [OK] cpuinfo 脚本 (调用 mtk-cpufreq + 温度)"
 
 # ----------------------------------------------------------------------------
-# 6.3 uci-defaults 初始化脚本
+# 5.3 uci-defaults 初始化脚本
 # ----------------------------------------------------------------------------
 # 【uci-defaults 是什么?】
 # /etc/uci-defaults/ 目录下的所有脚本会在系统首次启动时依次执行,
@@ -524,6 +429,134 @@ UCIEOF
 chmod +x files/etc/uci-defaults/99-custom-settings
 echo "  [OK] uci-defaults (BBR + Samba + ttyd + LAN IP)"
 
+# ----------------------------------------------------------------------------
+# 5.4 CIFS 自动重连 (断线后自动恢复挂载)
+# ----------------------------------------------------------------------------
+# 【为什么需要这个?】
+#   CIFS/SMB 挂载在 Linux 里有个老问题: 网络一断, 挂载点就僵死了,
+#   访问会卡住, 而且不会自动恢复。EasyTier 虚拟局域网重启/重连时
+#   经常遇到这个问题。
+#
+# 【工作原理】
+#   1. 先检查 UCI 里有没有配置 CIFS 挂载 (没有就啥也不干, 省资源)
+#   2. 有挂载的话, 每分钟检查一次挂载点是否正常
+#   3. 如果僵死了 (ls 超时), 就 lazy unmount 再重新 mount
+#
+# 【智能检测】
+#   - 只在有 CIFS 挂载配置时才启动 cron 任务
+#   - 用 timeout 命令检测, 防止 ls 卡住整个脚本
+# ----------------------------------------------------------------------------
+
+# --- 重连脚本 ---
+mkdir -p files/usr/bin
+cat > files/usr/bin/cifs-reconnect << 'CREOF'
+#!/bin/sh
+# ============================================================
+#  CIFS 自动重连脚本
+#  检测 CIFS 挂载是否僵死, 如果是则卸载后重新挂载
+# ============================================================
+
+# 从 UCI 读取所有 CIFS 挂载点
+get_mount_points() {
+    uci show cifs 2>/dev/null | grep "\.path=" | cut -d'=' -f2 | tr -d "'"
+}
+
+# 检查挂载点是否正常 (5秒超时, 防止卡住)
+is_mount_healthy() {
+    local mp="$1"
+    # 挂载点不存在 → 不正常
+    [ -d "$mp" ] || return 1
+    # ls 能在 5 秒内返回 → 正常
+    timeout 5 ls "$mp" >/dev/null 2>&1
+    return $?
+}
+
+# 重新挂载单个挂载点 (根据 UCI 配置名)
+remount_share() {
+    local cfg="$1"
+    local server path username password options
+
+    server=$(uci get "cifs.${cfg}.server" 2>/dev/null)
+    path=$(uci get "cifs.${cfg}.path" 2>/dev/null)
+    username=$(uci get "cifs.${cfg}.username" 2>/dev/null)
+    password=$(uci get "cifs.${cfg}.password" 2>/dev/null)
+    options=$(uci get "cifs.${cfg}.options" 2>/dev/null)
+    local_path=$(uci get "cifs.${cfg}.path" 2>/dev/null)
+
+    [ -z "$server" ] || [ -z "$path" ] && return 1
+
+    # 先卸载 (lazy unmount, 不管有没有进程占用都强制卸载)
+    umount -l "/mnt/${cfg}" 2>/dev/null
+
+    # 构造挂载参数
+    local opts=""
+    [ -n "$username" ] && opts="${opts},username=${username}"
+    [ -n "$password" ] && opts="${opts},password=${password}"
+    [ -n "$options" ] && opts="${opts},${options}"
+    opts="${opts#,}"  # 去掉开头的逗号
+
+    # 确保挂载目录存在
+    mkdir -p "/mnt/${cfg}"
+
+    # 重新挂载
+    if [ -n "$opts" ]; then
+        mount -t cifs "//${server}${path}" "/mnt/${cfg}" -o "$opts" 2>/dev/null
+    else
+        mount -t cifs "//${server}${path}" "/mnt/${cfg}" 2>/dev/null
+    fi
+
+    return $?
+}
+
+# ---- 主程序 ----
+# 检查有没有 CIFS 配置 (没有就直接退出)
+if ! uci show cifs >/dev/null 2>&1; then
+    exit 0
+fi
+
+# 遍历所有 mount 类型的配置节
+for cfg in $(uci show cifs 2>/dev/null | grep "=mount$" | cut -d'.' -f2 | cut -d'=' -f1); do
+    mp="/mnt/${cfg}"
+
+    # 挂载点不存在或没挂载 → 跳过 (可能用户还没配置)
+    if ! mountpoint -q "$mp" 2>/dev/null; then
+        continue
+    fi
+
+    # 检查是否正常
+    if is_mount_healthy "$mp"; then
+        continue
+    fi
+
+    # 不正常 → 尝试重连
+    logger -t cifs-reconnect "挂载点 $mp 异常, 尝试重连..."
+    if remount_share "$cfg"; then
+        logger -t cifs-reconnect "  [OK] 重连成功: $mp"
+    else
+        logger -t cifs-reconnect "  [失败] 重连失败: $mp"
+    fi
+done
+
+exit 0
+CREOF
+chmod +x files/usr/bin/cifs-reconnect
+echo "  [OK] CIFS 自动重连脚本"
+
+# --- uci-defaults: 配置 cron 定时任务 ---
+# 固定每分钟检查一次, 脚本内部会判断有没有 CIFS 挂载:
+#   - 没配置 / 没挂载 → 直接退出, 几乎不耗资源
+#   - 有挂载且正常   → 跳过
+#   - 有挂载但僵死   → 自动重连
+# 这样不管什么时候配置的 CIFS, 都能自动接管
+cat >> files/etc/uci-defaults/99-custom-settings << 'CRONEOF'
+
+# --- CIFS 自动重连 (cron 定时任务) ---
+# 每分钟检查一次, 脚本内部智能判断是否需要重连
+echo "* * * * * /usr/bin/cifs-reconnect" >> /etc/crontabs/root
+logger -t uci-defaults "已启用 CIFS 自动重连 (每分钟检测)"
+CRONEOF
+echo "  [OK] CIFS 重连 cron (每分钟检测, 智能启停)"
+
 # ============================================================================
 # 完成
 # ============================================================================
@@ -532,7 +565,7 @@ echo "============================================================"
 echo "  DIY Part 1 完成!"
 echo "============================================================"
 echo "  DTS 修改: 内存 2GB / 无 NMBM / UBI 506.5MB"
-echo "  第三方包: EasyTier界面 / argon主题 / ddns-go界面"
-echo "  二进制:   ddns-go (自动最新版) + mtk-cpufreq"
-echo "  系统优化: BBR + CPU频率显示 + uci-defaults"
+echo "  第三方包: EasyTier界面"
+echo "  二进制:   mtk-cpufreq"
+echo "  系统优化: BBR + CPU频率 + uci-defaults + CIFS自动重连"
 echo "============================================================"

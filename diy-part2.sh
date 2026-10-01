@@ -95,13 +95,12 @@ echo "--- 3. 新增软件包 (模板默认没有) ---"
 
 cat >> .config << 'EOF'
 
-# ---- 3.1 代理: dae (eBPF 透明代理) ----
-# 模板默认: 没有
-# 注意: 主程序叫 dae, LuCI 界面叫 luci-app-daed
-#       (很多人搞混, 以为主程序叫 daed, 实际上 daed 是带 dashboard 的版本,
-#        但 OpenWrt 包里主程序名就是 dae, 界面叫 luci-app-daed)
-# 来自 QiuSimons/luci-app-daed 仓库 (克隆到 package/dae/)
-CONFIG_PACKAGE_dae=y
+# ---- 3.1 代理: daed (eBPF 透明代理) ----
+# 模板默认: 没有 (但 packages feed 里有, 只是默认没选)
+# daed: 主程序 (带 dashboard 的 dae 版本)
+# luci-app-daed: LuCI 管理界面
+# 依赖: v2ray-geodata (geoip + geosite 数据包), make defconfig 会自动补齐
+CONFIG_PACKAGE_daed=y
 CONFIG_PACKAGE_luci-app-daed=y
 
 # ---- 3.2 组网: EasyTier (虚拟局域网) ----
@@ -112,12 +111,11 @@ CONFIG_PACKAGE_easytier=y
 CONFIG_PACKAGE_luci-app-easytier=y
 
 # ---- 3.3 DDNS: ddns-go (动态域名) ----
-# 模板默认: 没有
-# 注意: 主程序 ddns-go 二进制在 diy-part1.sh 中通过 files/ 方式放入
-#       包括 procd 启动脚本, 开机自动运行。
-#       ddns-go 自带 Web 管理界面 (默认端口 9800), 不需要 LuCI 插件。
-#       (之前的 luci-app-ddns-go 因为大仓库 DMCA 下架了, 找不到可靠独立源)
-# 这里不需要 CONFIG_ 选包, 因为是 files/ 方式放进去的
+# 模板默认: 没有 (但 packages + luci feed 里都有, 只是默认没选)
+# ddns-go: 主程序 (支持 IPv4/IPv6 动态域名解析)
+# luci-app-ddns-go: LuCI 管理界面
+CONFIG_PACKAGE_ddns-go=y
+CONFIG_PACKAGE_luci-app-ddns-go=y
 
 # ---- 3.4 文件共享: Samba4 + CIFS 挂载 + wsdd2 ----
 # 模板默认: 都没有 (模板只有 vfat, 没有 samba/cifs)
@@ -126,10 +124,13 @@ CONFIG_PACKAGE_luci-app-easytier=y
 CONFIG_PACKAGE_samba4-server=y
 CONFIG_PACKAGE_luci-app-samba4=y
 
-# kmod-fs-cifs: CIFS 客户端内核模块 (挂载远程 SMB 共享)
-# cifsmount: 命令行挂载工具
+# kmod-fs-cifs: CIFS 客户端内核模块 (挂载远程 SMB 共享必须)
+# cifs-utils: CIFS 工具集 (mount.cifs 等命令行工具)
+# luci-app-cifs-mount: LuCI 挂载管理界面 (配置存在 UCI 里, 开机自动挂载)
+#   配合 diy-part1.sh 里的 cifs-reconnect 脚本, 断线后自动重连
 CONFIG_PACKAGE_kmod-fs-cifs=y
-CONFIG_PACKAGE_cifsmount=y
+CONFIG_PACKAGE_cifs-utils=y
+CONFIG_PACKAGE_luci-app-cifs-mount=y
 
 # wsdd2: Windows 网络发现 (WSD) 守护进程
 #   没有的话 Windows 网上邻居看不到路由器
@@ -159,7 +160,7 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 EOF
-echo "  [OK] 新增: dae / EasyTier / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifs-utils) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 4. rootfs 分区大小
@@ -305,8 +306,10 @@ require_pkg() {
 
 echo ""
 echo "[必需包 (缺了直接退出)]"
-for p in dae luci-app-daed easytier luci-app-easytier \
-         samba4-server luci-app-samba4 kmod-fs-cifs cifsmount wsdd2 \
+for p in daed luci-app-daed ddns-go luci-app-ddns-go \
+         easytier luci-app-easytier \
+         samba4-server luci-app-samba4 \
+         kmod-fs-cifs cifs-utils luci-app-cifs-mount wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do
     require_pkg "$p"
