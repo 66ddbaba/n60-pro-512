@@ -187,21 +187,27 @@ EOF
 fi
 
 # ============================================================================
-# 4. 克隆第三方软件包 (直接克隆, 不走 feed 机制)
+# 4. 克隆第三方软件包 (全部独立小仓库)
 # ============================================================================
-# 【为什么不用 feeds 机制?】
-# feeds update 内部的 git clone 没有重试, GitHub Actions runner 偶尔
-# 网络抽风就会导致整个 feed 更新失败, 工作流直接挂掉。
+# 【为什么不用大的聚合仓库 (sirpdboy / kiddin9)?】
+# 这两个大仓库都因为 DMCA 投诉被 GitHub 下架了 (2026 年初)。
+# 所以我们改成每个需要的包单独克隆对应的独立小仓库:
+#   1. 小仓库体积小, 克隆快, 不容易失败
+#   2. 独立项目不容易被 DMCA (大仓库因为某个包牵连整个下架)
+#   3. 3 次重试 + 镜像回退, 更稳
 #
-# 【直接克隆的好处】
-#   1. 可以自己加重试逻辑 (3 次重试 + 间隔)
-#   2. 失败了可以控制是继续还是退出
-#   3. 克隆到 package/ 目录效果和 feed 完全一样, 编译系统会自动扫描
+# 【镜像回退机制】
+#   第 1-2 次: 直连 GitHub
+#   第 3 次:   走 ghproxy 镜像 (国内 CDN, 对付 GitHub 网络抽风)
 #
-# 【kiddin9/kwrt-packages 是什么?】
-# kiddin9 是一个活跃的 OpenWrt 第三方包仓库 (类似之前的 sirpdboy),
-# 里面包含了 daed、luci-app-daed、luci-app-ddns-go 等常用插件。
-# 之前用的 sirpdboy 因为 DMCA 投诉被 GitHub 下架了, 所以换成这个源。
+# 【daed 是什么?】
+# 基于 eBPF 的高性能透明代理, 是 dae 项目的衍生版。
+# QiuSimons/luci-app-daed 这个仓库同时包含 daed 主程序和 LuCI 界面,
+# 作者是 dae 核心贡献者, 是社区最权威的 OpenWrt 编译方式。
+#
+# 【为什么没有 netspeedtest?】
+# netspeedtest 是 DMCA 投诉的源头 (导致 sirpdboy / kiddin9 大仓库下架),
+# 而且测速用电脑直接测更准确, 路由器上跑测速反而不准 (CPU 瓶颈影响结果)。
 #
 # 【--depth 1 的作用】
 # 只克隆最新一次提交, 不下载完整历史, 省时间省空间。
@@ -209,7 +215,7 @@ fi
 echo ""
 echo "--- 4. 克隆第三方包 ---"
 
-# 克隆函数: 带 3 次重试
+# 克隆函数: 3 次重试 (前 2 次直连, 第 3 次走镜像)
 # 用法: clone_repo <目标目录> <仓库地址> [分支]
 clone_repo() {
     local dir="$1"
@@ -226,24 +232,32 @@ clone_repo() {
     [ -n "$branch" ] && branch_arg="-b $branch"
 
     for try in 1 2 3; do
-        if git clone --depth 1 $branch_arg "$url" "$dir" 2>/dev/null; then
+        # 第 3 次走 ghproxy 镜像
+        local try_url="$url"
+        if [ $try -eq 3 ]; then
+            try_url="https://ghproxy.com/${url}"
+            echo "    尝试镜像: ghproxy.com"
+        fi
+
+        if git clone --depth 1 $branch_arg "$try_url" "$dir" 2>/dev/null; then
             echo "  [OK] $name"
             return 0
         fi
+        rm -rf "$dir"
         [ $try -lt 3 ] && sleep 3
     done
     echo "  [失败] $name"
     return 1
 }
 
-# ---- 4.1 kiddin9/kwrt-packages (daed / luci-app-daed / luci-app-ddns-go 等) ----
-# 克隆到 package/kiddin9/, 编译系统自动扫描里面的所有包
-# 这个是必需的, 失败直接退出
-if clone_repo "package/kiddin9" "https://github.com/kiddin9/kwrt-packages.git" "main"; then
-    echo "       (含 daed / luci-app-daed / luci-app-ddns-go 等)"
+# ---- 4.1 daed (核心代理, 必需, 失败直接退出) ----
+# QiuSimons/luci-app-daed 仓库同时包含 daed 主程序和 luci-app-daed 界面
+# 注意: 要克隆到 package/dae/ 目录 (这是仓库作者约定的路径)
+if clone_repo "package/dae" "https://github.com/QiuSimons/luci-app-daed.git" "master"; then
+    echo "       (含 daed 主程序 + luci-app-daed 界面)"
 else
     echo ""
-    echo "  [错误] kiddin9 仓库克隆失败, daed 将不可用!"
+    echo "  [错误] daed 仓库克隆失败!"
     exit 1
 fi
 
