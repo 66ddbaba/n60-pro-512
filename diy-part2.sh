@@ -201,13 +201,13 @@ echo ""
 echo "--- 6. 精简固件 (只删模板/defconfig 默认有的) ---"
 
 # ---- A. 被新插件替代的 (模板默认有, 我们用更好的替代了) ----
-# ssr-plus → daed (eBPF 性能更好)
 # wrtbwmon → vnstat2 + nlbwmon (功能更强, 更准)
-# bootstrap-mod → argon (更好看)
-remove_pkg "luci-app-ssr-plus"
 remove_pkg "luci-app-wrtbwmon"
-remove_pkg "luci-theme-bootstrap-mod"
-echo "  [A] 被替代: ssr-plus / wrtbwmon / bootstrap-mod"
+echo "  [A] 被替代: wrtbwmon"
+
+# 【ssr-plus 和 bootstrap-mod 呢?】
+# 模板里只是有它们的子选项配置 (如 INCLUDE_xxx),
+# 但主包本身默认就不是 =y, 所以不需要 remove_pkg。
 
 # ---- B. 调试工具 (模板默认有, 普通用户用不到) ----
 # htop / nano → busybox 的 top/vi 够用, 需要时 opkg 装
@@ -223,14 +223,7 @@ for pkg in htop nano tcpdump libpcap regs mii_mgr \
 done
 echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit...)"
 
-# ---- C. ebtables 桥接防火墙 (模板默认有, 家用不需要) ----
-# ebtables 是二层桥接过滤, 家用主路由用 firewall4 (nftables) 就够了
-for pkg in kmod-ebtables kmod-ebtables-ipv4 kmod-ebtables-ipv6 ebtables; do
-    remove_pkg "$pkg"
-done
-echo "  [C] ebtables 桥接防火墙"
-
-# ---- D. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
+# ---- C. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
 # filter / tee / u32 / ipv4options: 非常冷门的匹配模块
 # compat-xtables: 旧版 iptables 兼容层, 6.6 内核用 nftables 不需要
 for mod in filter tee u32 ipv4options; do
@@ -238,9 +231,9 @@ for mod in filter tee u32 ipv4options; do
     remove_pkg "iptables-mod-${mod}"
 done
 remove_pkg "kmod-ipt-compat-xtables"
-echo "  [D] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat)"
+echo "  [C] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat)"
 
-# ---- E. IPv6 用户态工具 (内核保留) ----
+# ---- D. IPv6 用户态工具 (内核保留) ----
 # 模板默认有 ip6tables 相关的; defconfig 还会补齐 odhcp6c / luci-proto-ipv6 等
 # 你明确说不用 IPv6, 全删掉用户态工具
 # 注意: 内核 IPv6 栈不动 (有些程序隐性依赖)
@@ -248,18 +241,18 @@ for pkg in ip6tables-extra ip6tables-nft kmod-ipt-raw6 kmod-ip6tables-extra \
            odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
     remove_pkg "$pkg"
 done
-echo "  [E] IPv6 用户态工具 (内核保留)"
+echo "  [D] IPv6 用户态工具 (内核保留)"
 
-# ---- F. zram 内存压缩 (模板默认有, 2GB 内存不需要) ----
+# ---- E. zram 内存压缩 (模板默认有, 2GB 内存不需要) ----
 # zram-swap: 用户态脚本
 # kmod-zram: 内核模块
 # kmod-lib-lzo: LZO 压缩库
 for pkg in zram-swap kmod-zram kmod-lib-lzo; do
     remove_pkg "$pkg"
 done
-echo "  [F] zram 内存压缩 (2GB 不需要)"
+echo "  [E] zram 内存压缩 (2GB 不需要)"
 
-# ---- G. 其他 (模板默认有, 但我们不需要) ----
+# ---- F. 其他 (模板默认有, 但我们不需要) ----
 # blockd: 块设备自动挂载 (用 block-mount 手动挂载更可控)
 # openssh-keygen: SSH 密钥生成 (dropbear 够用)
 # openssh-sftp-server: SFTP 服务器 (scp 够用)
@@ -273,42 +266,44 @@ for pkg in blockd openssh-keygen openssh-sftp-server resolveip \
            libfido2 libcbor libevdev libudev-zero; do
     remove_pkg "$pkg"
 done
-echo "  [G] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b...)"
+echo "  [F] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b...)"
 
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
 # ============================================================================
-# 7. 验证 (检查关键包状态)
+# 7. 验证 (关键包缺失直接退出, 不白编译)
+# ============================================================================
+# 【为什么要验证?】
+# 编译一次要 2-3 小时, 如果关键包没选上, 白等半天。
+# 验证失败直接 exit 1, 让工作流提前失败, 省时间。
+#
+# 【两类检查】
+#   1. 必需包 (必须 =y, 缺了直接退出)
+#   2. 核心功能包 (确保没被误删, 缺了直接退出)
+#   3. 精简包 (只做信息展示, 不强制 - 本来就没有的也算正常)
 # ============================================================================
 echo ""
 echo "=== 验证 ==="
 
-check_pkg() {
+MISSING=0
+
+# require_pkg: 检查包是否 =y, 缺失就计数
+require_pkg() {
     if grep -q "CONFIG_PACKAGE_${1}=y" .config 2>/dev/null; then
         echo "  [OK] $1"
     else
-        echo "  [!!] $1 缺失!"
+        echo "  [缺失] $1"
+        MISSING=$((MISSING + 1))
     fi
 }
-
-check_removed() {
-    if grep -q "CONFIG_PACKAGE_${1} is not set" .config 2>/dev/null; then
-        echo "  [OK] ${1}: 已移除"
-    else
-        echo "  [??] ${1}: 状态不确定 (可能本来就没有)"
-    fi
-}
-
-echo "[设备]"
-grep "CONFIG_TARGET_DEVICE.*netcore_n60-pro=y" .config | head -1
 
 echo ""
-echo "[新增的包 (应该 =y)]"
+echo "[必需包 (缺了直接退出)]"
 for p in daed luci-app-daed easytier luci-app-easytier luci-app-ddns-go \
          samba4-server luci-app-samba4 kmod-fs-cifs cifsmount wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do
-    check_pkg "$p"
+    require_pkg "$p"
 done
 
 echo ""
@@ -316,19 +311,40 @@ echo "[核心功能 (确保没被误删)]"
 for p in kmod-mt_wifi kmod-mediatek_hnat kmod-tun kmod-tcp-bbr \
          kmod-usb-storage kmod-fs-ext4 block-mount ppp ppp-mod-pppoe \
          kmod-nls-base kmod-nls-utf8 libopenssl libncurses; do
-    check_pkg "$p"
+    require_pkg "$p"
 done
 
+# 有缺失就直接退出, 不继续编译
+if [ "$MISSING" -gt 0 ]; then
+    echo ""
+    echo "=============================================="
+    echo "  [错误] ${MISSING} 个关键包缺失!"
+    echo "  已终止, 请检查配置后重试。"
+    echo "=============================================="
+    exit 1
+fi
+
+# 精简包只做信息展示, 不强制退出 (本来就没有的也算正常)
+check_removed() {
+    if grep -q "CONFIG_PACKAGE_${1} is not set" .config 2>/dev/null; then
+        echo "  [OK] ${1}: 已移除"
+    else
+        echo "  [--] ${1}: 不在配置中 (默认就没有)"
+    fi
+}
+
 echo ""
-echo "[精简的包 (应该 is not set)]"
-for p in luci-app-ssr-plus luci-app-wrtbwmon luci-theme-bootstrap-mod \
-         htop nano ebtables zram-swap odhcp6c; do
+echo "[精简的包 (信息展示)]"
+for p in luci-app-wrtbwmon htop nano zram-swap odhcp6c; do
     check_removed "$p"
 done
 
 echo ""
 echo "[分区大小]"
 grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config
+
+echo ""
+echo "  [全部通过] 关键包验证完成"
 
 # ============================================================================
 # 完成
