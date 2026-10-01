@@ -66,61 +66,78 @@ jobs:
         uses: actions/checkout@v5
 
       # ============================================================
-      # Step 2: 释放磁盘空间
+      # Step 2: 释放磁盘空间 (只做高性价比清理)
       # ============================================================
       # 【为什么要清理?】
-      # GitHub 免费 runner 只有约 14GB 可用空间, 编译 OpenWrt 很容易爆。
-      # 系统自带了很多我们不需要的东西 (Android SDK / .NET / Swift / ...),
-      # 全部删掉能腾出 10GB+ 空间。
+      # GitHub 免费 runner 只有约 14GB 可用空间, 编译 OpenWrt 需要 ~15-20GB。
+      # 删掉系统自带但我们不需要的大块头, 腾出 ~10GB+ 就够了。
       #
-      # 【清理清单】
-      #   - 移动开发: Android SDK
-      #   - .NET / Swift / Haskell / Go / Ruby / PyPy / Julia / Kotlin
-      #   - 云计算: Azure CLI / PowerShell
-      #   - Docker 镜像
-      #   - apt 缓存和日志
-      #   - Node.js / NVM / Snap
+      # 【清理策略】
+      # 只做"秒级删几 GB"的高性价比操作, 跳过"花几分钟省几百 MB"的低性价比操作。
+      # 比如 apt-get remove 卸编译器要 1-2 分钟才省 300MB, 直接跳过。
+      #
+      # 【空间需求参考】
+      #   源码: ~0.5GB / dl下载: ~3-5GB / 工具链: ~3-5GB
+      #   编译中间文件: ~8-12GB / 输出: ~0.2GB
+      #   合计: ~15-20GB
       # ============================================================
       - name: Free disk space
         run: |
           echo "=== 清理前 ===" && df -h /
-          # 大块头的 SDK 和运行时
-          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc
-          sudo rm -rf /usr/local/share/boost /usr/share/swift
-          sudo rm -rf /opt/google /opt/az /opt/microsoft/powershell
-          # hostedtoolcache 里的各种语言运行时
+          START=$(date +%s)
+
+          # ---- 大块头 SDK/运行时 (秒级删几 GB, 性价比最高) ----
+          sudo rm -rf /usr/local/lib/android    # Android SDK: ~5GB
+          sudo rm -rf /usr/share/dotnet          # .NET: ~3GB
+          sudo rm -rf /usr/share/swift           # Swift: ~2.5GB
+          sudo rm -rf /opt/ghc                   # Haskell: ~1.5GB
+          sudo rm -rf /opt/az /opt/microsoft/powershell  # Azure + PowerShell: ~1GB
+          sudo rm -rf /usr/local/share/boost     # Boost C++ 库: ~500MB
+
+          # ---- hostedtoolcache 里的语言运行时 (秒级, ~2-3GB) ----
+          # 编译 OpenWrt 用自己的工具链, 不需要系统的 Go/Ruby/PyPy...
           sudo rm -rf /opt/hostedtoolcache/{go,Ruby,PyPy,CodeQL,julia,Kotlin}
-          # 只留一个 Python 3.x (删其他版本)
+          # Python 只留 3.x (删其他版本)
           sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name "3.*" -exec rm -rf {} + 2>/dev/null || true
-          # Docker 镜像和卷
+
+          # ---- Docker 镜像 (中等, ~1-2GB, 但比 apt 快) ----
           docker system prune -af --volumes 2>/dev/null || true
-          # apt 清理
-          sudo apt-get clean && sudo apt-get autoremove -y
-          # 临时文件和日志
-          sudo rm -rf /tmp/* /var/log/* /var/cache/apt/*
-          # 编译器多余的组件 (C++/Fortran/ObjC)
-          sudo apt-get remove -y firefox '*cpp*' '*fortran*' '*objc*' 2>/dev/null || true
-          sudo apt-get autoremove -y 2>/dev/null || true
-          # Node.js / NVM / Snap
-          sudo rm -rf /usr/local/share/npm /snap /usr/local/share/nvm 2>/dev/null || true
-          echo "=== 清理后 ===" && df -h /
+
+          # ---- apt 缓存 (秒级, ~200MB) ----
+          sudo apt-get clean
+          sudo rm -rf /var/cache/apt/*
+
+          # ---- 临时文件 + 日志 (秒级, ~几十 MB) ----
+          sudo rm -rf /tmp/* /var/log/*
+
+          # ---- Node/NVM/Snap (秒级, ~几百 MB) ----
+          sudo rm -rf /usr/local/share/npm /usr/local/share/nvm /snap 2>/dev/null || true
+
+          END=$(date +%s)
+          echo "=== 清理完成 (耗时 $((END - START)) 秒) ===" && df -h /
 
       # ============================================================
-      # Step 3: 安装编译依赖
+      # Step 3: 安装编译依赖 (保守精简版)
       # ============================================================
-      # 【为什么要装这些?】
-      # OpenWrt 编译需要一大堆工具:
-      #   - 编译器: gcc / g++ / clang / llvm
-      #   - 构建工具: make / cmake / ninja / scons / meson
-      #   - 版本控制: git / subversion
-      #   - 打包工具: tar / gzip / bzip2 / xz / zstd / cpio / 7z
-      #   - 文本处理: awk / sed / grep / flex / bison
-      #   - 文档工具: asciidoc / help2man / docbook
-      #   - 库文件: openssl / ncurses / zlib / elfutils / gmp / mpfr / mpc
+      # 【精简原则】
+      #  保守方案: 只移除 100% 确定用不到的包, 宁留勿删。
+      #  不确定的一律保留, 避免编译到一半报 "xxx not found"。
       #
-      # 【llvm/clang 是干吗的?】
-      # daed (eBPF 代理) 需要编译 BPF 程序, BPF 程序用 clang 编译。
-      # 系统装的 llvm/clang 版本比 OpenWrt 自带的新, 兼容性更好。
+      # 【移除的包 (约20个, 都是绝对不需要的)】
+      #   - 编辑器: nano / vim → 编译不需要编辑器
+      #   - 文档工具: asciidoc / help2man / texinfo / xmlto / python3-docutils
+      #   - Java工具: ecj / fastjar → OpenWrt 不用 Java
+      #   - 32位兼容: gcc-multilib / g++-multilib / lib32gcc-s1 / libc6-dev-i386
+      #   - 邮件/串口: msmtp / lrzsz
+      #   - 杂项: ack(搜索) / haveged(随机数) / mkisofs(ISO)
+      #           / qemu-utils(虚拟化) / swig(绑定生成)
+      #           / p7zip / upx-ucl / uglifyjs (小众压缩工具)
+      #
+      # 【保留的关键包】
+      #   - 编译器: gcc / g++ / clang / llvm (daed BPF 需要)
+      #   - 构建: make / cmake / ninja / autoconf / automake / scons
+      #   - 工具: git / curl / wget / rsync / patch / python3
+      #   - 库: openssl / elfutils / gmp / mpfr / mpc / zlib
       # ============================================================
       - name: Install dependencies
         env:
@@ -128,17 +145,14 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            ack antlr3 asciidoc autoconf automake autopoint binutils bison \
-            build-essential bzip2 ccache clang cmake cpio curl \
-            device-tree-compiler ecj fastjar flex gawk gettext gcc-multilib \
-            g++-multilib git gperf haveged help2man intltool lib32gcc-s1 \
-            libc6-dev-i386 libelf-dev libglib2.0-dev libgmp3-dev libltdl-dev \
-            libmpc-dev libmpfr-dev libncurses-dev libpython3-dev \
-            libreadline-dev libssl-dev libtool libyaml-dev libz-dev lld llvm \
-            lrzsz mkisofs msmtp nano ninja-build p7zip p7zip-full patch \
-            pkgconf python3 python3-pip python3-ply python3-docutils \
-            python3-pyelftools qemu-utils re2c rsync scons subversion swig \
-            texinfo uglifyjs upx-ucl unzip vim wget xmlto xxd zlib1g-dev zstd
+            antlr3 autoconf automake autopoint binutils bison build-essential \
+            bzip2 ccache clang cmake cpio curl device-tree-compiler flex gawk \
+            gettext git gperf intltool libelf-dev libglib2.0-dev libgmp3-dev \
+            libltdl-dev libmpc-dev libmpfr-dev libpython3-dev libreadline-dev \
+            libssl-dev libtool libyaml-dev libz-dev lld llvm ninja-build \
+            patch pkgconf python3 python3-pip python3-ply python3-pyelftools \
+            re2c rsync scons subversion swig unzip wget zlib1g-dev zstd
+          echo "=== 依赖安装完成 ==="
 
       # ============================================================
       # Step 4: 克隆固件源码
