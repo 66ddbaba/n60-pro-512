@@ -8,22 +8,15 @@
 #
 #  【执行时机】
 #  feeds install 之后 → make download 之前
-#  为什么在 feeds install 之后? 因为 feeds install 之后所有软件包才被注册,
-#  这时候才能选/取消它们。
 #
-#  【.config 是什么】
-#  .config 是 Linux/OpenWrt 的内核级配置文件, 每行一个配置项:
-#    CONFIG_PACKAGE_xxx=y    → 编入固件 (build-in)
-#    CONFIG_PACKAGE_xxx=m    → 编译成模块 (.ipk), 不进固件
-#    # CONFIG_PACKAGE_xxx is not set → 不编译
+#  【配置依据】
+#  模板: mt7975-ipailna-high-power.config
+#  本脚本只改"我们明确需要改变"的配置:
+#    - 增加: 模板默认没有、但我们需要的包
+#    - 移除: 模板默认有、但我们不需要的包
+#    - 不动: 模板有且我们也需要的 (不重复写 =y)
 #
-#  【精简原则】
-#  1. 核心功能绝不碰: WiFi / 拨号 / 防火墙 / 基础库 / 加密模块
-#  2. 被新插件替代的旧插件 → 移除
-#  3. 调试/诊断工具 → 移除 (需要时 opkg 装)
-#  4. 不用的硬件驱动 → 移除
-#  5. 不影响核心功能的可选模块 → 移除
-#  6. 后期拓展需要的依赖 → 保留 (比如文件系统、网络协议)
+#  为什么要这么做? 让脚本最精简, 改动最小化, 模板升级了也不容易出问题。
 # ============================================================================
 set -e  # 遇到错误立即退出
 
@@ -34,27 +27,15 @@ echo "============================================================"
 # ============================================================================
 # 1. 基础配置 + 设备选择
 # ============================================================================
-# 【为什么用 mt7975-ipailna-high-power.config?】
-# 这是社区 (237 等大佬) 推荐的高功率配置模板, 特点:
-#   - 使用 WARP v2 固件 (WiFi 性能更好)
-#   - 启用 iPA/iLNA (集成功率放大器/低噪声放大器)
-#   - WiFi 功率可以跑到 25dBm (原厂限制较低)
-#
-# 简单说就是 "让 WiFi 更强" 的配置模板。
-#
-# 【为什么禁用其他设备?】
-# 编译系统默认会编译所有支持的设备, 但我们只需要 N60 Pro。
-# 禁用其他设备可以节省编译时间 (少编译很多设备专用的包)。
-# ============================================================================
 echo ""
 echo "--- 1. 基础配置 ---"
 
-# 加载高功率模板
+# 加载高功率模板 (社区推荐, WARP v2 + iPA/iLNA 高功率)
 cp -f defconfig/mt7975-ipailna-high-power.config .config
 echo "  [OK] 模板: mt7975-ipailna-high-power.config"
 
-# 禁用其他设备 (减少编译时间)
-# 支持 mediatek_filogic 和 mediatek_mt7986 两种命名格式
+# 禁用其他设备 (只编译 N60 Pro, 省时间)
+# 模板默认启用了 gl-mt6000 / xdr6086 / xdr6088 / ax6000 / rg-x60 / ew-6000gx-pro 等
 for dev in glinet_gl-mt6000 jdcloud_re-cp-03 tplink_tl-xdr6086 tplink_tl-xdr6088 \
            xiaomi_redmi-router-ax6000-ubootmod xiaomi_redmi-router-ax6000-stock \
            ruijie_rg-x60-pro ruijie_rg-x60-new ruijie_ew-6000gx-pro; do
@@ -74,143 +55,18 @@ EOF
 echo "  [OK] 仅启用 N60 Pro 设备"
 
 # ============================================================================
-# 2. 精简固件 (移除不必要的包)
+# 2. daed 内核选项 (eBPF 支持)
 # ============================================================================
-# 【怎么判断能不能删?】
-#  判断标准:
-#    1. 是不是核心功能? (WiFi/拨号/防火墙/基础库 → 不能删)
-#    2. 有没有替代品? (有更好的新插件 → 删旧的)
-#    3. 普通用户用不用得到? (调试工具 → 删, 需要时再装)
-#    4. 硬件有没有? (N60 Pro 没有的设备驱动 → 删)
-#    5. 会不会影响后期拓展? (基础库/文件系统 → 尽量留)
-#
-# 【remove_pkg 函数】
-#  从 .config 中取消一个包的选中 (=y → is not set)
-#  用 REMOVE_COUNT 计数, 最后显示总共删了多少个。
-#  始终 return 0 避免触发 set -e (包不存在不是错误)。
+# 【为什么要单独改内核配置?】
+# daed 是 eBPF 代理, 需要 BTF (BPF Type Format) 调试信息。
+# 模板默认不开 BTF, 所以必须手动加上。
+# 代价: 内核增加 ~2-3MB, 但 daed 必须要, 属于必要开销。
 # ============================================================================
 echo ""
-echo "--- 2. 精简固件 ---"
-
-REMOVE_COUNT=0
-
-remove_pkg() {
-    if grep -q "^CONFIG_PACKAGE_${1}=y" .config 2>/dev/null; then
-        sed -i "s/^CONFIG_PACKAGE_${1}=y/# CONFIG_PACKAGE_${1} is not set/" .config
-        REMOVE_COUNT=$((REMOVE_COUNT + 1))
-    fi
-    return 0  # 始终返回 0, 包不存在也不算错误
-}
-
-# ---- A. 被新插件替代的旧插件 ----
-# daed 是 eBPF 实现的代理, 性能比 ssr-plus 好
-remove_pkg "luci-app-ssr-plus"
-# vnstat2 + nlbwmon 已经覆盖了 wrtbwmon 的功能
-remove_pkg "luci-app-wrtbwmon"
-# argon 主题替代默认 bootstrap-mod
-remove_pkg "luci-theme-bootstrap-mod"
-echo "  [A] 被替代的旧插件"
-
-# ---- B. 调试 / 诊断工具 ----
-# 这些工具普通用户用不到, 需要时 opkg install 就行
-# htop: 进程监控 (top 足够用)
-# nano: 文本编辑器 (vi 够用)
-# tcpdump: 抓包 (高级用户才用)
-# kvcedit / libkvcutil: KVC 配置工具
-# regs / mii_mgr: 寄存器/MII 调试工具
-for pkg in htop nano kvcedit tcpdump libpcap \
-           terminfo libncurses regs mii_mgr kmod-inet-diag libkvcutil; do
-    remove_pkg "$pkg"
-done
-echo "  [B] 调试/诊断工具"
-
-# ---- C. 不需要的硬件驱动 ----
-# N60 Pro 没有这些硬件, 留着浪费空间
-# kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
-# kmod-ata-core: SATA 接口驱动 (N60 Pro 没有 SATA)
-remove_pkg "kmod-leds-ws2812b"
-remove_pkg "kmod-ata-core"
-echo "  [C] 无用硬件驱动"
-
-# ---- D. 桥接防火墙 (ebtables) ----
-# ebtables 是二层桥接防火墙, 家庭主路由几乎用不到
-# 我们用 iptables/nftables (三层) 就够了
-for pkg in kmod-ebtables kmod-ebtables-ipv4 kmod-ebtables-ipv6 ebtables; do
-    remove_pkg "$pkg"
-done
-echo "  [D] ebtables (桥接防火墙)"
-
-# ---- E. 不常用 iptables 模块 ----
-# 这些是 iptables 的小众模块, 普通用户用不到
-# filter/tee/u32/ipv4options 都是比较冷门的匹配模块
-# compat-xtables 是旧版兼容层, 6.6 内核不需要
-for mod in filter tee u32 ipv4options; do
-    remove_pkg "kmod-ipt-${mod}"
-    remove_pkg "iptables-mod-${mod}"
-done
-remove_pkg "kmod-ipt-compat-xtables"
-echo "  [E] 不常用 iptables 模块"
-
-# ---- F. IPv6 用户态工具 (内核保留) ----
-# 为什么只删用户态不删内核?
-#   内核 IPv6 协议栈很小, 而且有些程序可能隐性依赖它
-#   用户态工具 (odhcp6c / ip6tables 等) 占空间大, 而且用户明确说不用 IPv6
-# 这样既省空间, 又不会因为缺内核支持导致奇怪的问题
-for pkg in ip6tables-extra ip6tables-nft kmod-ipt-raw6 kmod-ip6tables-extra \
-           odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
-    remove_pkg "$pkg"
-done
-echo "  [F] IPv6 用户态工具"
-
-# ---- G. 其他非核心包 ----
-# blockd: 块设备自动挂载 (我们用 block-mount, 更轻量)
-# libfido2 / libcbor: FIDO 安全密钥支持 (很少人用)
-# libevdev / libudev-zero: 输入设备库 (路由器不需要键盘鼠标)
-# openssh-keygen: SSH 密钥生成 (dropbear 够用)
-# resolveip: DNS 解析工具 (busybox 有 nslookup)
-# zram-swap / kmod-zram / kmod-lib-lzo: 内存压缩 (2GB 内存用不上)
-for pkg in blockd libfido2 libevdev libudev-zero libcbor \
-           openssh-keygen resolveip \
-           zram-swap kmod-zram kmod-lib-lzo; do
-    remove_pkg "$pkg"
-done
-echo "  [G] 其他非核心包"
-
-# ---- H. 网页诊断/统计界面 ----
-# luci-app-diag-core: 网络诊断网页界面 (ping/traceroute 等, 命令行也能用)
-# luci-app-statistics: 实时统计页面 (vnstat2 + nlbwmon 已经覆盖)
-remove_pkg "luci-app-diag-core"
-remove_pkg "luci-app-statistics"
-echo "  [H] 诊断/统计网页界面"
-
-echo "  合计移除: ${REMOVE_COUNT} 个包"
-
-# ============================================================================
-# 3. daed 内核选项 (eBPF 支持)
-# ============================================================================
-# 【daed 为什么需要内核改配置?】
-# daed 是基于 eBPF (extended Berkeley Packet Filter) 的代理工具。
-# eBPF 允许在内核里运行沙盒程序, 性能很高但需要内核支持。
-#
-# 【这些选项的作用】
-#   DEBUG_INFO / DEBUG_INFO_BTF: 调试信息 + BTF (BPF Type Format)
-#     → daed 需要 BTF 来解析内核类型信息, 才能正确加载 eBPF 程序
-#     → 注意: 这会让内核变大一些 (增加 ~2-3MB), 但 daed 必须要
-#   BPF_EVENTS: BPF 事件追踪
-#   XDP_SOCKETS: XDP (eXpress Data Path) 支持, 高性能数据路径
-#   BPF_TOOLCHAIN_HOST: 用主机的 LLVM 编译 BPF 程序
-#     → 而不是用 OpenWrt 自带的 (可能版本不够)
-#
-# 【为什么要主机 LLVM?】
-# BPF 程序需要用 clang/llvm 编译。build.yml 中已经安装了系统的 llvm/clang,
-# 这里配置让编译系统用主机的工具链来编译 BPF 程序。
-# ============================================================================
-echo ""
-echo "--- 3. daed eBPF 内核选项 ---"
+echo "--- 2. daed eBPF 内核选项 ---"
 cat >> .config << 'EOF'
 # BTF 调试信息 (daed 必需, 没有的话 eBPF 程序加载失败)
 CONFIG_KERNEL_DEBUG_INFO=y
-# CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set
 CONFIG_KERNEL_DEBUG_INFO_BTF=y
 # BPF 事件追踪支持
 CONFIG_KERNEL_BPF_EVENTS=y
@@ -223,197 +79,211 @@ EOF
 echo "  [OK] BPF + BTF + XDP (daed 必需)"
 
 # ============================================================================
-# 4. 添加软件包
+# 3. 新增软件包 (模板默认没有、我们需要的)
 # ============================================================================
-# 【选包原则】
-#  1. 用户明确要求的 → 必加
-#  2. 核心功能依赖 → 必加
-#  3. 常用而且小的 → 加
-#  4. 不常用而且大的 → 不加 (需要时 opkg 装)
+# 【原则】
+#  模板默认已经有的包, 这里不重复写 =y (避免冗余)
+#  只写模板默认没有、但我们明确需要的。
 #
-# 【y vs m】
-#  =y → 编入固件 (build-in), 刷完就能用
-#  =m → 编译成 .ipk 模块, 不进固件 (后期 opkg 安装)
-#  我们都用 =y, 因为要确保刷完就能用。
-#
-# 【包列表按功能分组】
-#  方便阅读和修改, 想加/减某个功能直接在对应组里改就行。
+# 【模板已有的、不需要重复写的】
+#   kmod-tun / kmod-tcp-bbr / kmod-nls-utf8 / kmod-nls-base
+#   libopenssl / libstdcpp / ca-certificates / iw / iwinfo
+#   这些模板默认就 =y, 不用再写一遍。
 # ============================================================================
 echo ""
-echo "--- 4. 添加软件包 ---"
+echo "--- 3. 新增软件包 (模板默认没有) ---"
 
 cat >> .config << 'EOF'
 
-# =====================================================
-#  4.1 代理: daed (eBPF 实现)
-# =====================================================
-# 为什么选 daed 而不是 ssr-plus / passwall?
-#   - eBPF 实现, 性能高, 不占用户态 CPU
-#   - 代码相对简洁, 维护活跃
-#   - 支持各种协议 (VMess / VLESS / Trojan / Shadowsocks 等)
-# daed: 主程序 (eBPF 内核模块 + 用户态守护进程)
-# luci-app-daed: LuCI 管理界面
+# ---- 3.1 代理: daed (eBPF 实现) ----
+# 模板默认: 没有 (模板带的是 ssr-plus, 我们后面会删掉)
 CONFIG_PACKAGE_daed=y
 CONFIG_PACKAGE_luci-app-daed=y
 
-# =====================================================
-#  4.2 组网: EasyTier (虚拟局域网)
-# =====================================================
-# EasyTier: 点对点 VPN, 可以把不同地方的设备组成一个虚拟局域网
-# 比如: 家里的路由器 + 公司的电脑 + 手机, 都在同一个 10.0.0.0/24 网段
-# easytier: 主程序
-# luci-app-easytier: LuCI 管理界面
+# ---- 3.2 组网: EasyTier (虚拟局域网) ----
+# 模板默认: 没有
+# easytier: 主程序 (feeds 里有, 但默认不选)
+# luci-app-easytier: LuCI 界面 (我们在 diy-part1.sh 克隆的)
 CONFIG_PACKAGE_easytier=y
 CONFIG_PACKAGE_luci-app-easytier=y
 
-# =====================================================
-#  4.3 DDNS: ddns-go (动态域名)
-# =====================================================
-# 为什么选 ddns-go 而不是 luci-app-ddns?
-#   - 支持的 DNS 服务商更多 (阿里云/Cloudflare/腾讯云 等几十种)
-#   - Web 界面更友好
-#   - 自动更新方便
+# ---- 3.3 DDNS: ddns-go (动态域名) ----
+# 模板默认: 没有
 # 注意: 主程序 ddns-go 二进制在 diy-part1.sh 中通过 files/ 方式放入
-#       这里只选 LuCI 界面
+#       这里只选 LuCI 界面 (我们克隆的)
 CONFIG_PACKAGE_luci-app-ddns-go=y
 
-# =====================================================
-#  4.4 文件共享: Samba4 (服务端) + CIFS (客户端)
-# =====================================================
-# Samba4 服务端: 把路由器上插的 U 盘/移动硬盘共享给局域网设备
-#   Windows / Mac / 手机 / 电视 都能访问
-# samba4-server: Samba 4 服务端
+# ---- 3.4 文件共享: Samba4 + CIFS 挂载 + wsdd2 ----
+# 模板默认: 都没有 (模板只有 vfat, 没有 samba/cifs)
+# samba4-server: Samba 4 服务端 (局域网共享 U 盘/硬盘)
 # luci-app-samba4: LuCI 管理界面
 CONFIG_PACKAGE_samba4-server=y
 CONFIG_PACKAGE_luci-app-samba4=y
 
-# CIFS 客户端: 挂载远程 SMB 共享到路由器
-#   比如: 通过 EasyTier 挂载远程电脑的共享文件夹, 再共享给本地局域网
-# kmod-fs-cifs: CIFS 文件系统内核模块
-# kmod-nls-utf8: UTF-8 字符集 (中文文件名不乱码)
-# kmod-nls-base: NLS 基础模块
+# kmod-fs-cifs: CIFS 客户端内核模块 (挂载远程 SMB 共享)
+# cifsmount: 命令行挂载工具
 CONFIG_PACKAGE_kmod-fs-cifs=y
-CONFIG_PACKAGE_kmod-nls-base=y
-CONFIG_PACKAGE_kmod-nls-utf8=y
-# cifsmount: 命令行挂载 CIFS 共享的工具 (LuCI 挂载界面依赖)
 CONFIG_PACKAGE_cifsmount=y
 
-# wsdd2: Web Service Discovery 守护进程
-#   Windows 的"网络邻居"发现设备靠这个, 没有的话 Windows 网上邻居里看不到路由器
-#   虽然 samba4 也有 WSD 支持, 但 wsdd2 更轻量、兼容性更好
+# wsdd2: Windows 网络发现 (WSD) 守护进程
+#   没有的话 Windows 网上邻居看不到路由器
 CONFIG_PACKAGE_wsdd2=y
 
-# =====================================================
-#  4.5 流量统计: WAN口 + 内网设备
-# =====================================================
-# 两个工具互补, 不重复:
-#   vnstat2  → 统计 WAN 口总流量 (按月/日/小时), 适合看每月用了多少
-#   nlbwmon  → 统计内网每个设备的流量 (基于 conntrack), 适合看谁用得多
-#
-# vnstat2: 轻量级网络流量监控 (第二代, 比 vnstat v1 更好)
-# vnstat2-image: 图片生成支持 (LuCI 界面画图表需要)
-# luci-app-vnstat2: LuCI 管理界面
+# ---- 3.5 流量统计: vnstat2 + nlbwmon ----
+# 模板默认: 没有 (模板带 wrtbwmon, 我们后面会删掉)
+# vnstat2: 第二代流量统计 (比 v1 好)
+# vnstat2-image: 生成图表 (LuCI 界面需要)
+# luci-app-vnstat2: LuCI 界面
 CONFIG_PACKAGE_vnstat2=y
 CONFIG_PACKAGE_vnstat2-image=y
 CONFIG_PACKAGE_luci-app-vnstat2=y
 
-# nlbwmon: 基于连接追踪的带宽监控
-#   优点: 轻量, 不需要抓包, 直接读 conntrack
-#   缺点: 只能看当前连接的设备, 重启后数据会丢
-# luci-app-nlbwmon: LuCI 管理界面
+# nlbwmon: 基于 conntrack 的设备级流量统计
+# luci-app-nlbwmon: LuCI 界面
 CONFIG_PACKAGE_nlbwmon=y
 CONFIG_PACKAGE_luci-app-nlbwmon=y
 
-# =====================================================
-#  4.6 主题 + 终端
-# =====================================================
-# argon 主题: 现代风格主题, 比默认 bootstrap 好看
-#   支持明暗主题切换、响应式布局、移动端适配
+# ---- 3.6 主题 + 网页终端 ----
+# 模板默认: 没有 (模板带 bootstrap-mod, 我们后面会删掉)
+# argon: 现代风格主题
 CONFIG_PACKAGE_luci-theme-argon=y
 
-# ttyd: 网页终端
-#   在浏览器里就能用命令行, 不用装 SSH 客户端
-#   配合 uci-defaults 设置免登录, 局域网内很方便
+# ttyd: 网页终端 (浏览器里直接用命令行)
+# luci-app-ttyd: LuCI 界面
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
-
-# 【注意】
-# CPU 频率显示不靠 autocore-arm 包 (它对 MT7986 支持不好)。
-# 我们用 mtk-cpufreq 二进制 + 自定义 cpuinfo 脚本 (在 diy-part1.sh 的 files/ 里),
-# 直接读寄存器获取真实频率, 比 autocore 更准确。
-# 所以不选 autocore-arm, 避免冗余。
 EOF
-echo "  [OK] 包选择完成 (daed + EasyTier + ddns-go + Samba + CIFS + wsdd2 + cifsmount + vnstat2 + nlbwmon + argon + ttyd)"
+echo "  [OK] 新增: daed / EasyTier / ddns-go / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
-# 5. rootfs 分区大小
+# 4. rootfs 分区大小
 # ============================================================================
-# 【UBI 布局概念】
-# 整个 UBI 分区 (~506.5MB) 被分成两部分:
-#   rootfs      : squashfs 只读分区, 放固件本体 (系统 + 内置插件)
-#   rootfs_data : overlay 可写分区, 放配置 + 后装的插件
-#
-# 【为什么设 80MB?】
-# 当前固件大小估算:
-#   内核 + 基础系统: ~30MB
-#   WiFi 固件 + 驱动: ~10MB
-#   内置插件 (daed/easytier/samba 等): ~20-25MB
-#   其他 (主题/工具/库): ~5-10MB
-#   合计: ~65-75MB
-# 设 80MB 留 5-15MB 余量, 防止加包后超容。
-#
-# 剩下的 ~420MB 全给 rootfs_data (overlay), 装插件空间非常充足。
-#
-# 【注意】
-# 这个值是 squashfs 的最大大小, 实际固件如果只有 60MB, 就只占 60MB。
-# 设大了不会浪费空间, 只是限制了"最大能多大"。
+# 模板默认 rootfs 是按 128MB 布局设的, 我们 506.5MB 布局可以设大一点。
+# 设 80MB: 留 5-15MB 余量, 剩下 ~420MB 给 overlay (装插件空间非常充足)
 # ============================================================================
 echo ""
-echo "--- 5. rootfs 分区大小 ---"
+echo "--- 4. rootfs 分区大小 ---"
 echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=80' >> .config
-echo "  [OK] 80MB (rootfs_data 约 420MB 可用)"
+echo "  [OK] 80MB (overlay ~420MB 可用)"
 
 # ============================================================================
-# 6. make defconfig
+# 5. make defconfig (补齐所有依赖)
 # ============================================================================
-# 【这一步为什么重要?】
-# 我们手动往 .config 里加了很多行, 但可能有问题:
-#   1. 依赖缺失: 选了 A 包, 但它依赖的 B 包没选
-#   2. 配置冲突: 两个互斥的选项同时选了
-#   3. 格式错误: 手写的配置项格式不对
-#
-# make defconfig 会:
-#   1. 自动补齐所有依赖
-#   2. 处理冲突 (按优先级保留)
-#   3. 生成合法的、完整的 .config
-#
-# 这一步必须做, 否则编译可能出各种奇怪的错误。
+# 【作用】
+# 自动补齐所有依赖、处理冲突、生成完整合法的 .config。
+# 这一步之后, 所有包的依赖关系才完整。
 # ============================================================================
 echo ""
-echo "--- 6. make defconfig (补齐依赖) ---"
+echo "--- 5. make defconfig (补齐依赖) ---"
 make defconfig
 echo "  [OK] defconfig 完成"
 
 # ============================================================================
-# 7. 验证 (检查关键包是否正确选中)
+# 6. 精简 (prune_packages)
 # ============================================================================
-# 【为什么要验证?】
-# 编译一次要 2-3 小时, 如果关键包没选上, 白等半天。
-# 编译前先检查一下, 有问题能及时发现。
+# 【为什么在 defconfig 之后才精简?】
+# make defconfig 会自动补齐所有依赖。如果先删再 defconfig,
+# 某些包可能作为依赖被重新 =y, 白删了。
+# 在 defconfig 之后删, 确保我们明确要删的不会被带回来。
+# ============================================================================
+
+# remove_pkg: 取消一个包 (=y → is not set)
+REMOVE_COUNT=0
+remove_pkg() {
+    if grep -q "^CONFIG_PACKAGE_${1}=y" .config 2>/dev/null; then
+        sed -i "s/^CONFIG_PACKAGE_${1}=y/# CONFIG_PACKAGE_${1} is not set/" .config
+        REMOVE_COUNT=$((REMOVE_COUNT + 1))
+    fi
+    return 0
+}
+
+echo ""
+echo "--- 6. 精简固件 (只删模板/defconfig 默认有的) ---"
+
+# ---- A. 被新插件替代的 (模板默认有, 我们用更好的替代了) ----
+# ssr-plus → daed (eBPF 性能更好)
+# wrtbwmon → vnstat2 + nlbwmon (功能更强, 更准)
+# bootstrap-mod → argon (更好看)
+remove_pkg "luci-app-ssr-plus"
+remove_pkg "luci-app-wrtbwmon"
+remove_pkg "luci-theme-bootstrap-mod"
+echo "  [A] 被替代: ssr-plus / wrtbwmon / bootstrap-mod"
+
+# ---- B. 调试工具 (模板默认有, 普通用户用不到) ----
+# htop / nano → busybox 的 top/vi 够用, 需要时 opkg 装
+# tcpdump / libpcap → 抓包工具, 很少用
+# regs / mii_mgr → 寄存器/MII 调试, 普通用户不用
+# kvcedit / libkvcutil → KVC 配置工具
+# kmod-inet-diag → 网络诊断内核模块
 #
-# 【检查哪些】
-#   - 设备是否正确选中
-#   - 核心功能包 (代理/组网/DDNS/共享/统计)
-#   - 主题和工具
-#   - 核心驱动 (WiFi/NAT/USB/存储)
-#   - 确认已移除的包确实不在
-#   - 分区大小是否正确
+# 【保留的】libncurses + terminfo: 才几十KB, 后期装 htop/nano 需要
+for pkg in htop nano tcpdump libpcap regs mii_mgr \
+           kvcedit libkvcutil kmod-inet-diag; do
+    remove_pkg "$pkg"
+done
+echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit...)"
+
+# ---- C. ebtables 桥接防火墙 (模板默认有, 家用不需要) ----
+# ebtables 是二层桥接过滤, 家用主路由用 firewall4 (nftables) 就够了
+for pkg in kmod-ebtables kmod-ebtables-ipv4 kmod-ebtables-ipv6 ebtables; do
+    remove_pkg "$pkg"
+done
+echo "  [C] ebtables 桥接防火墙"
+
+# ---- D. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
+# filter / tee / u32 / ipv4options: 非常冷门的匹配模块
+# compat-xtables: 旧版 iptables 兼容层, 6.6 内核用 nftables 不需要
+for mod in filter tee u32 ipv4options; do
+    remove_pkg "kmod-ipt-${mod}"
+    remove_pkg "iptables-mod-${mod}"
+done
+remove_pkg "kmod-ipt-compat-xtables"
+echo "  [D] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat)"
+
+# ---- E. IPv6 用户态工具 (内核保留) ----
+# 模板默认有 ip6tables 相关的; defconfig 还会补齐 odhcp6c / luci-proto-ipv6 等
+# 你明确说不用 IPv6, 全删掉用户态工具
+# 注意: 内核 IPv6 栈不动 (有些程序隐性依赖)
+for pkg in ip6tables-extra ip6tables-nft kmod-ipt-raw6 kmod-ip6tables-extra \
+           odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
+    remove_pkg "$pkg"
+done
+echo "  [E] IPv6 用户态工具 (内核保留)"
+
+# ---- F. zram 内存压缩 (模板默认有, 2GB 内存不需要) ----
+# zram-swap: 用户态脚本
+# kmod-zram: 内核模块
+# kmod-lib-lzo: LZO 压缩库
+for pkg in zram-swap kmod-zram kmod-lib-lzo; do
+    remove_pkg "$pkg"
+done
+echo "  [F] zram 内存压缩 (2GB 不需要)"
+
+# ---- G. 其他 (模板默认有, 但我们不需要) ----
+# blockd: 块设备自动挂载 (用 block-mount 手动挂载更可控)
+# openssh-keygen: SSH 密钥生成 (dropbear 够用)
+# openssh-sftp-server: SFTP 服务器 (scp 够用)
+# resolveip: DNS 解析工具 (busybox nslookup 够用)
+# kmod-ata-core: SATA 驱动 (N60 Pro 没有 SATA)
+# kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
+# libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
+# libevdev / libudev-zero: 输入设备库 (路由器不需要键盘鼠标)
+for pkg in blockd openssh-keygen openssh-sftp-server resolveip \
+           kmod-ata-core kmod-leds-ws2812b \
+           libfido2 libcbor libevdev libudev-zero; do
+    remove_pkg "$pkg"
+done
+echo "  [G] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b...)"
+
+echo "  合计移除: ${REMOVE_COUNT} 个包"
+
+# ============================================================================
+# 7. 验证 (检查关键包状态)
 # ============================================================================
 echo ""
 echo "=== 验证 ==="
 
-# check 函数: 检查一个包是否被 =y 选中
-check() {
+check_pkg() {
     if grep -q "CONFIG_PACKAGE_${1}=y" .config 2>/dev/null; then
         echo "  [OK] $1"
     else
@@ -421,56 +291,43 @@ check() {
     fi
 }
 
+check_removed() {
+    if grep -q "CONFIG_PACKAGE_${1} is not set" .config 2>/dev/null; then
+        echo "  [OK] ${1}: 已移除"
+    else
+        echo "  [??] ${1}: 状态不确定 (可能本来就没有)"
+    fi
+}
+
 echo "[设备]"
-grep "CONFIG_TARGET_DEVICE.*netcore" .config | head -1
+grep "CONFIG_TARGET_DEVICE.*netcore_n60-pro=y" .config | head -1
 
 echo ""
-echo "[代理 / 组网 / DDNS]"
-for p in daed luci-app-daed easytier luci-app-easytier luci-app-ddns-go; do
-    check "$p"
+echo "[新增的包 (应该 =y)]"
+for p in daed luci-app-daed easytier luci-app-easytier luci-app-ddns-go \
+         samba4-server luci-app-samba4 kmod-fs-cifs cifsmount wsdd2 \
+         vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
+         luci-theme-argon ttyd luci-app-ttyd; do
+    check_pkg "$p"
 done
-
-echo ""
-echo "[文件共享]"
-for p in samba4-server luci-app-samba4 kmod-fs-cifs kmod-nls-utf8 wsdd2 cifsmount; do
-    check "$p"
-done
-
-echo ""
-echo "[流量统计]"
-for p in vnstat2 vnstat2-image luci-app-vnstat2 nlbwmon luci-app-nlbwmon; do
-    check "$p"
-done
-
-echo ""
-echo "[主题 / 工具]"
-for p in luci-theme-argon ttyd luci-app-ttyd; do
-    check "$p"
-done
-
-echo ""
-echo "[CPU 频率 (靠 mtk-cpufreq + cpuinfo 脚本, 不靠包)]"
-echo "  (验证方式: 刷固件后看 LuCI 概览页是否显示频率)"
 
 echo ""
 echo "[核心功能 (确保没被误删)]"
 for p in kmod-mt_wifi kmod-mediatek_hnat kmod-tun kmod-tcp-bbr \
-         kmod-usb-storage kmod-fs-ext4 block-mount ppp; do
-    check "$p"
+         kmod-usb-storage kmod-fs-ext4 block-mount ppp ppp-mod-pppoe \
+         kmod-nls-base kmod-nls-utf8 libopenssl libncurses; do
+    check_pkg "$p"
 done
 
 echo ""
-echo "[精简验证 (确认已移除)]"
-for p in luci-app-ssr-plus htop tcpdump ebtables zram-swap; do
-    if grep -q "CONFIG_PACKAGE_${p} is not set" .config; then
-        echo "  [OK] ${p}: 已移除"
-    else
-        echo "  [--] ${p}: 不在配置中 (默认就没有)"
-    fi
+echo "[精简的包 (应该 is not set)]"
+for p in luci-app-ssr-plus luci-app-wrtbwmon luci-theme-bootstrap-mod \
+         htop nano ebtables zram-swap odhcp6c; do
+    check_removed "$p"
 done
 
 echo ""
-echo "[分区]"
+echo "[分区大小]"
 grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config
 
 # ============================================================================
@@ -480,11 +337,11 @@ echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成!"
 echo "============================================================"
-echo "  精简: 移除 ${REMOVE_COUNT} 个包"
-echo "  内置: daed / EasyTier / ddns-go"
-echo "        samba4 / CIFS挂载 / wsdd2 / cifsmount"
+echo "  新增: daed / EasyTier / ddns-go"
+echo "        samba4 / CIFS挂载 / wsdd2"
 echo "        vnstat2 / nlbwmon"
 echo "        argon / ttyd"
+echo "  精简: 移除 ${REMOVE_COUNT} 个包"
 echo "  CPU频率: mtk-cpufreq + cpuinfo 脚本 (不靠 autocore 包)"
 echo "  rootfs: 80MB (overlay ~420MB)"
 echo "============================================================"
