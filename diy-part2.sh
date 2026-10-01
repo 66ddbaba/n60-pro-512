@@ -95,9 +95,13 @@ echo "--- 3. 新增软件包 (模板默认没有) ---"
 
 cat >> .config << 'EOF'
 
-# ---- 3.1 代理: daed (eBPF 实现) ----
-# 模板默认: 没有 (模板带的是 ssr-plus, 我们后面会删掉)
-CONFIG_PACKAGE_daed=y
+# ---- 3.1 代理: dae (eBPF 透明代理) ----
+# 模板默认: 没有
+# 注意: 主程序叫 dae, LuCI 界面叫 luci-app-daed
+#       (很多人搞混, 以为主程序叫 daed, 实际上 daed 是带 dashboard 的版本,
+#        但 OpenWrt 包里主程序名就是 dae, 界面叫 luci-app-daed)
+# 来自 QiuSimons/luci-app-daed 仓库 (克隆到 package/dae/)
+CONFIG_PACKAGE_dae=y
 CONFIG_PACKAGE_luci-app-daed=y
 
 # ---- 3.2 组网: EasyTier (虚拟局域网) ----
@@ -155,7 +159,7 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 EOF
-echo "  [OK] 新增: daed / EasyTier / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] 新增: dae / EasyTier / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 4. rootfs 分区大小
@@ -301,7 +305,7 @@ require_pkg() {
 
 echo ""
 echo "[必需包 (缺了直接退出)]"
-for p in daed luci-app-daed easytier luci-app-easytier \
+for p in dae luci-app-daed easytier luci-app-easytier \
          samba4-server luci-app-samba4 kmod-fs-cifs cifsmount wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do

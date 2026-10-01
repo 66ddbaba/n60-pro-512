@@ -250,14 +250,15 @@ clone_repo() {
     return 1
 }
 
-# ---- 4.1 daed (核心代理, 必需, 失败直接退出) ----
-# QiuSimons/luci-app-daed 仓库同时包含 daed 主程序和 luci-app-daed 界面
+# ---- 4.1 dae (核心代理, 必需, 失败直接退出) ----
+# QiuSimons/luci-app-daed 仓库同时包含 dae 主程序和 luci-app-daed 界面
 # 注意: 要克隆到 package/dae/ 目录 (这是仓库作者约定的路径)
+#       主程序包名叫 dae, 界面包名叫 luci-app-daed, 别搞混了
 if clone_repo "package/dae" "https://github.com/QiuSimons/luci-app-daed.git" "master"; then
-    echo "       (含 daed 主程序 + luci-app-daed 界面)"
+    echo "       (含 dae 主程序 + luci-app-daed 界面)"
 else
     echo ""
-    echo "  [错误] daed 仓库克隆失败!"
+    echo "  [错误] dae 仓库克隆失败!"
     exit 1
 fi
 
