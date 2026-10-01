@@ -110,8 +110,10 @@ CONFIG_PACKAGE_luci-app-easytier=y
 # ---- 3.3 DDNS: ddns-go (动态域名) ----
 # 模板默认: 没有
 # 注意: 主程序 ddns-go 二进制在 diy-part1.sh 中通过 files/ 方式放入
-#       这里只选 LuCI 界面 (我们克隆的)
-CONFIG_PACKAGE_luci-app-ddns-go=y
+#       包括 procd 启动脚本, 开机自动运行。
+#       ddns-go 自带 Web 管理界面 (默认端口 9800), 不需要 LuCI 插件。
+#       (之前的 luci-app-ddns-go 因为大仓库 DMCA 下架了, 找不到可靠独立源)
+# 这里不需要 CONFIG_ 选包, 因为是 files/ 方式放进去的
 
 # ---- 3.4 文件共享: Samba4 + CIFS 挂载 + wsdd2 ----
 # 模板默认: 都没有 (模板只有 vfat, 没有 samba/cifs)
@@ -153,7 +155,7 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 EOF
-echo "  [OK] 新增: daed / EasyTier / ddns-go / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] 新增: daed / EasyTier / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 4. rootfs 分区大小
@@ -299,7 +301,7 @@ require_pkg() {
 
 echo ""
 echo "[必需包 (缺了直接退出)]"
-for p in daed luci-app-daed easytier luci-app-easytier luci-app-ddns-go \
+for p in daed luci-app-daed easytier luci-app-easytier \
          samba4-server luci-app-samba4 kmod-fs-cifs cifsmount wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do
