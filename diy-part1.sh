@@ -187,56 +187,69 @@ EOF
 fi
 
 # ============================================================================
-# 4. 添加第三方 feed + 克隆额外包
+# 4. 克隆第三方软件包 (直接克隆, 不走 feed 机制)
 # ============================================================================
-# 【feeds 是什么?】
-# feeds 是 OpenWrt 的软件包源, 类似 Linux 的 apt 仓库。
-# feeds.conf 里配置了要从哪里拉软件包。
-# feeds update -a → 更新所有 feeds 的元数据
-# feeds install -a → 把所有包软链接到 package/feeds/ 目录
+# 【为什么不用 feeds 机制?】
+# feeds update 内部的 git clone 没有重试, GitHub Actions runner 偶尔
+# 网络抽风就会导致整个 feed 更新失败, 工作流直接挂掉。
 #
-# 【为什么要加 sirpdboy feed?】
-# daed (eBPF 代理) 和 luci-app-ddns-go 不在 ImmortalWrt 默认 feeds 里,
-# 它们在 sirpdboy 的源里。加一行配置就行, 标准做法, 代码最简洁。
+# 【直接克隆的好处】
+#   1. 可以自己加重试逻辑 (3 次重试 + 间隔)
+#   2. 失败了可以控制是继续还是退出
+#   3. 克隆到 package/ 目录效果和 feed 完全一样, 编译系统会自动扫描
 #
-# 【为什么还要单独克隆几个包?】
-# 有些包 (比如 EasyTier 的 LuCI 界面、argon 主题) 不在任何 feed 里,
-# 所以直接克隆到 package/ 目录。
+# 【kiddin9/kwrt-packages 是什么?】
+# kiddin9 是一个活跃的 OpenWrt 第三方包仓库 (类似之前的 sirpdboy),
+# 里面包含了 daed、luci-app-daed、luci-app-ddns-go 等常用插件。
+# 之前用的 sirpdboy 因为 DMCA 投诉被 GitHub 下架了, 所以换成这个源。
 #
 # 【--depth 1 的作用】
 # 只克隆最新一次提交, 不下载完整历史, 省时间省空间。
 # ============================================================================
 echo ""
-echo "--- 4. 第三方 feed + 额外包 ---"
+echo "--- 4. 克隆第三方包 ---"
 
-# 4.1 添加 sirpdboy feed (daed / luci-app-ddns-go 所在的源)
-# src-git 表示从 git 仓库拉取
-if ! grep -q "sirpdboy" feeds.conf feeds.conf.default 2>/dev/null; then
-    echo "src-git sirpdboy https://github.com/sirpdboy/sirpdboy-package.git" >> feeds.conf
-    echo "  [OK] 添加 sirpdboy feed"
+# 克隆函数: 带 3 次重试
+# 用法: clone_repo <目标目录> <仓库地址> [分支]
+clone_repo() {
+    local dir="$1"
+    local url="$2"
+    local branch="${3:-}"
+    local name=$(basename "$dir")
+
+    if [ -d "$dir" ]; then
+        echo "  [跳过] $name"
+        return 0
+    fi
+
+    local branch_arg=""
+    [ -n "$branch" ] && branch_arg="-b $branch"
+
+    for try in 1 2 3; do
+        if git clone --depth 1 $branch_arg "$url" "$dir" 2>/dev/null; then
+            echo "  [OK] $name"
+            return 0
+        fi
+        [ $try -lt 3 ] && sleep 3
+    done
+    echo "  [失败] $name"
+    return 1
+}
+
+# ---- 4.1 kiddin9/kwrt-packages (daed / luci-app-daed / luci-app-ddns-go 等) ----
+# 克隆到 package/kiddin9/, 编译系统自动扫描里面的所有包
+# 这个是必需的, 失败直接退出
+if clone_repo "package/kiddin9" "https://github.com/kiddin9/kwrt-packages.git" "main"; then
+    echo "       (含 daed / luci-app-daed / luci-app-ddns-go 等)"
 else
-    echo "  [跳过] sirpdboy feed 已存在"
+    echo ""
+    echo "  [错误] kiddin9 仓库克隆失败, daed 将不可用!"
+    exit 1
 fi
 
-# 4.2 克隆额外的包 (不在任何 feed 里的)
-# 用 "目录 → 仓库地址" 映射, 循环克隆
-declare -A REPOS=(
-    # EasyTier 的 LuCI 管理界面 (主程序 easytier 在官方 feeds 里, 但 LuCI 界面没有)
-    ["package/luci-app-easytier"]="https://github.com/EasyTier/luci-app-easytier.git"
-    # argon 主题 (现代风格, 比默认 bootstrap 好看很多)
-    ["package/luci-theme-argon"]="https://github.com/jerrykuku/luci-theme-argon.git"
-)
-
-for dir in "${!REPOS[@]}"; do
-    name=$(basename "$dir")
-    if [ -d "$dir" ]; then
-        echo "  [跳过] $name (已存在)"
-    else
-        git clone --depth 1 "${REPOS[$dir]}" "$dir" 2>/dev/null \
-            && echo "  [OK] $name" \
-            || echo "  [警告] $name 克隆失败"
-    fi
-done
+# ---- 4.2 其他独立仓库 ----
+clone_repo "package/luci-app-easytier" "https://github.com/EasyTier/luci-app-easytier.git" || true
+clone_repo "package/luci-theme-argon" "https://github.com/jerrykuku/luci-theme-argon.git" || true
 
 # ============================================================================
 # 5. ddns-go 预编译二进制 (files/ 方式)
