@@ -187,72 +187,56 @@ EOF
 fi
 
 # ============================================================================
-# 4. 克隆第三方软件包 (直接克隆, 不走 feed 机制)
+# 4. 添加第三方 feed + 克隆额外包
 # ============================================================================
-# 【为什么不用 feeds 机制?】
-# 之前试过加 sirpdboy feed, 但 GitHub Actions runner 偶尔会克隆失败
-# (网络问题/限流导致 feed update 挂掉)。
-#
-# 【直接克隆的好处】
-#   1. 更可靠: 每个包单独克隆, 一个失败不影响其他
-#   2. 更轻量: 只下载我们需要的包, 不用拉整个 feed
-#   3. 更灵活: 可以选不同仓库的不同包
-#
 # 【feeds 是什么?】
 # feeds 是 OpenWrt 的软件包源, 类似 Linux 的 apt 仓库。
-# 默认 feeds (packages/luci/routing/telephony) 还是正常用的,
-# 我们只把"默认 feeds 里没有的几个包"用直接克隆方式添加。
+# feeds.conf 里配置了要从哪里拉软件包。
+# feeds update -a → 更新所有 feeds 的元数据
+# feeds install -a → 把所有包软链接到 package/feeds/ 目录
+#
+# 【为什么要加 sirpdboy feed?】
+# daed (eBPF 代理) 和 luci-app-ddns-go 不在 ImmortalWrt 默认 feeds 里,
+# 它们在 sirpdboy 的源里。加一行配置就行, 标准做法, 代码最简洁。
+#
+# 【为什么还要单独克隆几个包?】
+# 有些包 (比如 EasyTier 的 LuCI 界面、argon 主题) 不在任何 feed 里,
+# 所以直接克隆到 package/ 目录。
 #
 # 【--depth 1 的作用】
 # 只克隆最新一次提交, 不下载完整历史, 省时间省空间。
 # ============================================================================
 echo ""
-echo "--- 4. 克隆第三方包 ---"
+echo "--- 4. 第三方 feed + 额外包 ---"
 
+# 4.1 添加 sirpdboy feed (daed / luci-app-ddns-go 所在的源)
+# src-git 表示从 git 仓库拉取
+if ! grep -q "sirpdboy" feeds.conf feeds.conf.default 2>/dev/null; then
+    echo "src-git sirpdboy https://github.com/sirpdboy/sirpdboy-package.git" >> feeds.conf
+    echo "  [OK] 添加 sirpdboy feed"
+else
+    echo "  [跳过] sirpdboy feed 已存在"
+fi
+
+# 4.2 克隆额外的包 (不在任何 feed 里的)
 # 用 "目录 → 仓库地址" 映射, 循环克隆
 declare -A REPOS=(
-    # ---- daed (eBPF 代理, 主程序 + LuCI 界面) ----
-    # daed 不在 ImmortalWrt 默认 feeds 里, 从 sirpdboy 仓库克隆
-    ["package/daed"]="https://github.com/sirpdboy/daed.git"
-    ["package/luci-app-daed"]="https://github.com/sirpdboy/luci-app-daed.git"
-    # ddns-go 的 LuCI 界面 (主程序用 files/ 二进制, 界面在这里)
-    ["package/luci-app-ddns-go"]="https://github.com/sirpdboy/luci-app-ddns-go.git"
-    # ---- EasyTier 的 LuCI 管理界面 ----
-    # 主程序 easytier 在官方 feeds 里, 但 LuCI 界面没有
+    # EasyTier 的 LuCI 管理界面 (主程序 easytier 在官方 feeds 里, 但 LuCI 界面没有)
     ["package/luci-app-easytier"]="https://github.com/EasyTier/luci-app-easytier.git"
-    # ---- argon 主题 ----
-    # 现代风格主题, 比默认 bootstrap 好看很多
+    # argon 主题 (现代风格, 比默认 bootstrap 好看很多)
     ["package/luci-theme-argon"]="https://github.com/jerrykuku/luci-theme-argon.git"
 )
 
-FAIL_COUNT=0
 for dir in "${!REPOS[@]}"; do
     name=$(basename "$dir")
     if [ -d "$dir" ]; then
         echo "  [跳过] $name (已存在)"
     else
-        # 重试 2 次, 提高成功率
-        success=0
-        for try in 1 2; do
-            if git clone --depth 1 "${REPOS[$dir]}" "$dir" 2>/dev/null; then
-                success=1
-                break
-            fi
-            sleep 2
-        done
-        if [ $success -eq 1 ]; then
-            echo "  [OK] $name"
-        else
-            echo "  [失败] $name"
-            FAIL_COUNT=$((FAIL_COUNT + 1))
-        fi
+        git clone --depth 1 "${REPOS[$dir]}" "$dir" 2>/dev/null \
+            && echo "  [OK] $name" \
+            || echo "  [警告] $name 克隆失败"
     fi
 done
-
-# 有失败的话提示一下, 但不退出 (让 diy-part2.sh 的验证去报错)
-if [ "$FAIL_COUNT" -gt 0 ]; then
-    echo "  警告: ${FAIL_COUNT} 个包克隆失败, 后续验证会检查"
-fi
 
 # ============================================================================
 # 5. ddns-go 预编译二进制 (files/ 方式)
