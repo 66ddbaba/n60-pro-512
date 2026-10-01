@@ -187,33 +187,45 @@ EOF
 fi
 
 # ============================================================================
-# 4. 克隆第三方软件包
+# 4. 添加第三方 feeds + 克隆额外包
 # ============================================================================
-# 【为什么要克隆?】
-# OpenWrt 的软件包分两部分:
-#   1. 官方 feeds (feeds.conf 里配置的, feeds update 自动拉取)
-#   2. 第三方包 (不在官方源里的, 要手动放到 package/ 目录)
+# 【feeds 是什么?】
+# feeds 是 OpenWrt 的软件包源, 类似 Linux 的 apt 仓库。
+# feeds.conf 里配置了要从哪里拉软件包。
 #
-# 这里克隆的都是官方源里没有的 LuCI 界面或主题。
+# 【为什么要加 sirpdboy feed?】
+# daed (eBPF 代理) 不在 ImmortalWrt 默认 feeds 里, 它在 sirpdboy 源里。
+# 加一个 feed 很轻量:
+#   - 只是加一行配置, feeds update 时拉取元数据
+#   - feeds install -a 只是创建软链接, 不占多少空间
+#   - 只有我们 =y 选中的包才会被编译进固件
 #
-# 【为什么只用 LuCI 界面?】
-# 有些软件的主程序 (比如 easytier) 已经在官方 feeds 里了,
-# 我们只需要克隆 LuCI 界面包就行, 主程序由 feeds 提供。
+# 【为什么还要单独克隆几个包?】
+# 有些包 (比如 EasyTier 的 LuCI 界面) 不在任何 feed 里,
+# 或者 feed 里的版本太旧, 所以直接克隆到 package/ 目录。
 #
 # 【--depth 1 的作用】
 # 只克隆最新一次提交, 不下载完整历史, 省时间省空间。
 # ============================================================================
 echo ""
-echo "--- 4. 克隆第三方包 ---"
+echo "--- 4. 第三方 feeds + 额外包 ---"
 
-# 用 "目录 → 仓库地址" 的映射, 循环克隆, 方便增减
+# 4.1 添加 sirpdboy feed (daed 所在的源)
+# src-git 表示从 git 仓库拉取
+if ! grep -q "sirpdboy" feeds.conf feeds.conf.default 2>/dev/null; then
+    echo "src-git sirpdboy https://github.com/sirpdboy/sirpdboy-package.git" >> feeds.conf
+    echo "  [OK] 添加 sirpdboy feed (daed 源)"
+else
+    echo "  [跳过] sirpdboy feed 已存在"
+fi
+
+# 4.2 克隆额外的包 (feeds 里没有的)
+# 用 "目录 → 仓库地址" 映射, 循环克隆
 declare -A REPOS=(
-    # EasyTier 的 LuCI 管理界面 (主程序 easytier 在官方 feeds 里)
+    # EasyTier 的 LuCI 管理界面 (主程序 easytier 在 feeds 里, 但 LuCI 界面没有)
     ["package/luci-app-easytier"]="https://github.com/EasyTier/luci-app-easytier.git"
     # argon 主题 (现代风格, 比默认 bootstrap 好看很多)
     ["package/luci-theme-argon"]="https://github.com/jerrykuku/luci-theme-argon.git"
-    # ddns-go 的 LuCI 管理界面 (主程序用 files/ 放预编译二进制, 不编译)
-    ["package/luci-app-ddns-go"]="https://github.com/sirpdboy/luci-app-ddns-go.git"
 )
 
 for dir in "${!REPOS[@]}"; do
@@ -227,13 +239,10 @@ for dir in "${!REPOS[@]}"; do
     fi
 done
 
-# 【为什么要删除 ddns-go 源码子包?】
-# sirpdboy 的 luci-app-ddns-go 仓库里包含了 ddns-go 主程序源码,
-# 但 ddns-go 是 Go 语言写的, OpenWrt 的 Go 交叉编译环境配置复杂容易失败。
-# 我们的方案: 直接下载官方预编译好的 arm64 二进制放到 files/ 目录,
-# 只保留 LuCI 界面参与编译, 简单可靠。
-rm -rf package/luci-app-ddns-go/ddns-go 2>/dev/null \
-    && echo "  [OK] 移除 ddns-go 源码子包 (用 files/ 二进制替代)"
+# 【ddns-go 的 LuCI 界面呢?】
+# luci-app-ddns-go 在 sirpdboy feed 里有, 不用单独克隆。
+# ddns-go 主程序我们用 files/ 放预编译二进制 (Go 交叉编译麻烦),
+# LuCI 界面直接从 sirpdboy feed 安装, 完美配合。
 
 # ============================================================================
 # 5. ddns-go 预编译二进制 (files/ 方式)
