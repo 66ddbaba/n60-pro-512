@@ -79,45 +79,62 @@ EOF
 echo "  [OK] BPF + BTF + XDP (daed 必需)"
 
 # ============================================================================
-# 3. 新增软件包 (模板默认没有、我们需要的)
+# 3. 第一次 make defconfig (基础配置)
+# ============================================================================
+# 【为什么要两次 defconfig?】
+#   第一次: 只设置了目标平台、设备、内核选项 (BPF/BTF 等)
+#          让内核配置先稳定下来, 所有内核符号都解析完成。
+#   第二次: 加完所有软件包后再跑一次, 补齐依赖。
+#
+# 【为什么不一次搞定?】
+#   有些软件包 (比如 daed) 依赖内核配置 (BPF/BTF)。
+#   如果内核配置还没完全解析就加包, make defconfig 会认为
+#   "依赖不满足" 而把这些包踢掉。
+#   分两次就能避免这个问题。
+# ============================================================================
+echo ""
+echo "--- 3. 第一次 defconfig (内核 + 基础配置) ---"
+make defconfig
+echo "  [OK] 第一次 defconfig 完成"
+
+# ============================================================================
+# 4. 新增软件包 (模板默认没有、我们需要的)
 # ============================================================================
 # 【原则】
 #  模板默认已经有的包, 这里不重复写 =y (避免冗余)
 #  只写模板默认没有、但我们明确需要的。
 #
-# 【模板已有的、不需要重复写的】
-#   kmod-tun / kmod-tcp-bbr / kmod-nls-utf8 / kmod-nls-base
-#   libopenssl / libstdcpp / ca-certificates / iw / iwinfo
-#   这些模板默认就 =y, 不用再写一遍。
+#  注意: 放在第一次 defconfig 之后, 确保内核配置已就绪,
+#       依赖内核功能的包 (如 daed) 不会被踢掉。
 # ============================================================================
 echo ""
-echo "--- 3. 新增软件包 (模板默认没有) ---"
+echo "--- 4. 新增软件包 ---"
 
 cat >> .config << 'EOF'
 
-# ---- 3.1 代理: daed (eBPF 透明代理) ----
+# ---- 4.1 代理: daed (eBPF 透明代理) ----
 # 模板默认: 没有 (但 packages feed 里有, 只是默认没选)
 # daed: 主程序 (带 dashboard 的 dae 版本)
 # luci-app-daed: LuCI 管理界面
-# 依赖: v2ray-geodata (geoip + geosite 数据包), make defconfig 会自动补齐
+# 依赖: v2ray-geodata (geoip + geosite 数据包), 第二次 defconfig 会自动补齐
 CONFIG_PACKAGE_daed=y
 CONFIG_PACKAGE_luci-app-daed=y
 
-# ---- 3.2 组网: EasyTier (虚拟局域网) ----
+# ---- 4.2 组网: EasyTier (虚拟局域网) ----
 # 模板默认: 没有
 # easytier: 主程序 (feeds 里有, 但默认不选)
 # luci-app-easytier: LuCI 界面 (我们在 diy-part1.sh 克隆的)
 CONFIG_PACKAGE_easytier=y
 CONFIG_PACKAGE_luci-app-easytier=y
 
-# ---- 3.3 DDNS: ddns-go (动态域名) ----
+# ---- 4.3 DDNS: ddns-go (动态域名) ----
 # 模板默认: 没有 (但 packages + luci feed 里都有, 只是默认没选)
 # ddns-go: 主程序 (支持 IPv4/IPv6 动态域名解析)
 # luci-app-ddns-go: LuCI 管理界面
 CONFIG_PACKAGE_ddns-go=y
 CONFIG_PACKAGE_luci-app-ddns-go=y
 
-# ---- 3.4 文件共享: Samba4 + CIFS 挂载 + wsdd2 ----
+# ---- 4.4 文件共享: Samba4 + CIFS 挂载 + wsdd2 ----
 # 模板默认: 都没有 (模板只有 vfat, 没有 samba/cifs)
 # samba4-server: Samba 4 服务端 (局域网共享 U 盘/硬盘)
 # luci-app-samba4: LuCI 管理界面
@@ -136,7 +153,7 @@ CONFIG_PACKAGE_luci-app-cifs-mount=y
 #   没有的话 Windows 网上邻居看不到路由器
 CONFIG_PACKAGE_wsdd2=y
 
-# ---- 3.5 流量统计: vnstat2 + nlbwmon ----
+# ---- 4.5 流量统计: vnstat2 + nlbwmon ----
 # 模板默认: 没有 (模板带 wrtbwmon, 我们后面会删掉)
 # vnstat2: 第二代流量统计 (比 v1 好)
 # vnstat2-image: 生成图表 (LuCI 界面需要)
@@ -150,7 +167,7 @@ CONFIG_PACKAGE_luci-app-vnstat2=y
 CONFIG_PACKAGE_nlbwmon=y
 CONFIG_PACKAGE_luci-app-nlbwmon=y
 
-# ---- 3.6 主题 + 网页终端 ----
+# ---- 4.6 主题 + 网页终端 ----
 # 模板默认: 没有 (模板带 bootstrap-mod, 我们后面会删掉)
 # argon: 现代风格主题
 CONFIG_PACKAGE_luci-theme-argon=y
@@ -163,32 +180,31 @@ EOF
 echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifs-utils) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
-# 4. rootfs 分区大小
+# 5. rootfs 分区大小
 # ============================================================================
 # 模板默认 rootfs 是按 128MB 布局设的, 我们 506.5MB 布局可以设大一点。
 # 设 80MB: 留 5-15MB 余量, 剩下 ~420MB 给 overlay (装插件空间非常充足)
 # ============================================================================
 echo ""
-echo "--- 4. rootfs 分区大小 ---"
+echo "--- 5. rootfs 分区大小 ---"
 echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=80' >> .config
 echo "  [OK] 80MB (overlay ~420MB 可用)"
 
 # ============================================================================
-# 5. make defconfig (补齐所有依赖)
+# 6. 第二次 make defconfig (补齐软件包依赖)
 # ============================================================================
-# 【作用】
-# 自动补齐所有依赖、处理冲突、生成完整合法的 .config。
-# 这一步之后, 所有包的依赖关系才完整。
+# 加完所有软件包后再跑一次 defconfig, 自动补齐所有依赖。
+# 这次内核配置已经就绪, 不会把依赖内核的包踢掉了。
 # ============================================================================
 echo ""
-echo "--- 5. make defconfig (补齐依赖) ---"
+echo "--- 6. 第二次 defconfig (补齐软件包依赖) ---"
 make defconfig
-echo "  [OK] defconfig 完成"
+echo "  [OK] 第二次 defconfig 完成"
 
 # ============================================================================
-# 6. 精简 (prune_packages)
+# 7. 精简 (prune_packages)
 # ============================================================================
-# 【为什么在 defconfig 之后才精简?】
+# 【为什么在第二次 defconfig 之后才精简?】
 # make defconfig 会自动补齐所有依赖。如果先删再 defconfig,
 # 某些包可能作为依赖被重新 =y, 白删了。
 # 在 defconfig 之后删, 确保我们明确要删的不会被带回来。
@@ -205,7 +221,7 @@ remove_pkg() {
 }
 
 echo ""
-echo "--- 6. 精简固件 (只删模板/defconfig 默认有的) ---"
+echo "--- 7. 精简固件 (只删模板/defconfig 默认有的) ---"
 
 # ---- A. 被新插件替代的 (模板默认有, 我们用更好的替代了) ----
 # wrtbwmon → vnstat2 + nlbwmon (功能更强, 更准)
@@ -278,7 +294,7 @@ echo "  [F] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b...)"
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
 # ============================================================================
-# 7. 验证 (关键包缺失直接退出, 不白编译)
+# 8. 验证 (关键包缺失直接退出, 不白编译)
 # ============================================================================
 # 【为什么要验证?】
 # 编译一次要 2-3 小时, 如果关键包没选上, 白等半天。
