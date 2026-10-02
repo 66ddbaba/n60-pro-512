@@ -300,13 +300,15 @@ echo "  [E] zram 内存压缩 (2GB 不需要)"
 # kmod-ata-core: SATA 驱动 (N60 Pro 没有 SATA)
 # kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
 # libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
-# libevdev / libudev-zero: 输入设备库 (路由器不需要键盘鼠标)
+# libevdev: 输入设备库 (路由器不需要键盘鼠标)
 # haveged: 随机数熵生成器 (6.6 内核有更好的随机源, 不需要)
 #
-# 【保留的】blockd: U 盘自动挂载, 几十KB, 留着方便
+# 【保留的】
+#   blockd: U 盘自动挂载, 几十KB, 留着方便
+#   libudev-zero: usbutils(lsusb) 依赖, 不能删
 for pkg in openssh-keygen openssh-sftp-server resolveip \
            kmod-ata-core kmod-leds-ws2812b \
-           libfido2 libcbor libevdev libudev-zero \
+           libfido2 libcbor libevdev \
            haveged; do
     remove_pkg "$pkg"
 done
