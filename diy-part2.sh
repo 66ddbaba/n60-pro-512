@@ -3,20 +3,16 @@
 #  DIY Part 2 - 生成 .config (feeds 安装之后执行)
 #
 #  【这个脚本做什么】
-#  配置编译选项, 选择/取消软件包, 调整内核参数, 最后用 make defconfig
+#  配置编译选项, 选择软件包, 调整内核参数, 最后用 make defconfig
 #  生成合法的最终 .config 配置文件。
 #
 #  【执行时机】
 #  feeds install 之后 → make download 之前
 #
-#  【配置依据】
+#  【当前策略: 只加不减, 先跑通再精简】
 #  模板: mt7975-ipailna-high-power.config
-#  本脚本只改"我们明确需要改变"的配置:
-#    - 增加: 模板默认没有、但我们需要的包
-#    - 移除: 模板默认有、但我们不需要的包
-#    - 不动: 模板有且我们也需要的 (不重复写 =y)
-#
-#  为什么要这么做? 让脚本最精简, 改动最小化, 模板升级了也不容易出问题。
+#  本脚本只做"加法": 在模板基础上增加我们需要的包, 不主动删任何包。
+#  等编译跑通后, 再根据输出的包列表做有针对性的精简。
 # ============================================================================
 set -e  # 遇到错误立即退出
 
@@ -171,7 +167,7 @@ CONFIG_PACKAGE_luci-app-cifs-mount=y
 CONFIG_PACKAGE_wsdd2=y
 
 # ---- 4.5 流量统计: vnstat2 + nlbwmon ----
-# 模板默认: 没有 (模板带 wrtbwmon, 我们后面会删掉)
+# 模板默认: 没有 (模板带 wrtbwmon)
 # vnstat2: 第二代流量统计 (比 v1 好)
 # vnstat2-image: 生成图表 (LuCI 界面需要)
 # luci-app-vnstat2: LuCI 界面
@@ -185,7 +181,7 @@ CONFIG_PACKAGE_nlbwmon=y
 CONFIG_PACKAGE_luci-app-nlbwmon=y
 
 # ---- 4.6 主题 + 网页终端 ----
-# 模板默认: 没有 (模板带 bootstrap-mod, 我们后面会删掉)
+# 模板默认: 没有 (模板带 bootstrap-mod)
 # argon: 现代风格主题
 CONFIG_PACKAGE_luci-theme-argon=y
 
@@ -201,7 +197,8 @@ echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifsmount) / wsdd2
 # 5. rootfs 分区大小
 # ============================================================================
 # 模板默认 rootfs 是按 128MB 布局设的, 我们 506.5MB 布局可以设大一点。
-# 设 80MB: 留 5-15MB 余量, 剩下 ~420MB 给 overlay (装插件空间非常充足)
+# 先设 80MB: 留 5-15MB 余量, 剩下 ~420MB 给 overlay。
+# 如果后续精简了包, 可以适当调小。
 # ============================================================================
 echo ""
 echo "--- 5. rootfs 分区大小 ---"
@@ -220,110 +217,37 @@ make defconfig
 echo "  [OK] 第二次 defconfig 完成"
 
 # ============================================================================
-# 7. 精简 (prune_packages)
+# 7. 输出包列表 (供后续精简分析用)
 # ============================================================================
-# 【为什么在第二次 defconfig 之后才精简?】
-# make defconfig 会自动补齐所有依赖。如果先删再 defconfig,
-# 某些包可能作为依赖被重新 =y, 白删了。
-# 在 defconfig 之后删, 确保我们明确要删的不会被带回来。
+# 把所有 =y 的 CONFIG_PACKAGE_* 都列出来, 保存到 package-list.txt。
+# 后续精简时可以对照这个列表, 知道模板 + 新增 + 依赖总共有哪些包。
+#
+# 输出格式: 纯包名, 每行一个, 方便后续 grep / diff 分析。
 # ============================================================================
-
-# remove_pkg: 取消一个包 (=y → is not set)
-REMOVE_COUNT=0
-remove_pkg() {
-    if grep -q "^CONFIG_PACKAGE_${1}=y" .config 2>/dev/null; then
-        sed -i "s/^CONFIG_PACKAGE_${1}=y/# CONFIG_PACKAGE_${1} is not set/" .config
-        REMOVE_COUNT=$((REMOVE_COUNT + 1))
-    fi
-    return 0
-}
-
 echo ""
-echo "--- 7. 精简固件 (只删模板/defconfig 默认有的) ---"
+echo "--- 7. 输出包列表 (用于精简分析) ---"
 
-# ---- A. 被新插件替代的 (模板默认有, 我们用更好的替代了) ----
-# wrtbwmon → vnstat2 + nlbwmon (功能更强, 更准)
-remove_pkg "luci-app-wrtbwmon"
-remove_pkg "luci-i18n-wrtbwmon-zh-cn"
-echo "  [A] 被替代: wrtbwmon (+中文翻译)"
+PKG_LIST="package-list.txt"
 
-# 【ssr-plus 和 bootstrap-mod 呢?】
-# 模板里只是有它们的子选项配置 (如 INCLUDE_xxx),
-# 但主包本身默认就不是 =y, 所以不需要 remove_pkg。
+# 提取所有 =y 的包, 去掉 CONFIG_PACKAGE_ 前缀, 按字母排序
+grep "^CONFIG_PACKAGE_.*=y" .config \
+    | sed 's/^CONFIG_PACKAGE_//' \
+    | sed 's/=y$//' \
+    | sort \
+    > "$PKG_LIST"
 
-# ---- B. 调试工具 (模板默认有, 普通用户用不到) ----
-# htop / nano → busybox 的 top/vi 够用, 需要时 opkg 装
-# tcpdump / libpcap → 抓包工具, 很少用
-# regs / mii_mgr → 寄存器/MII 调试, 普通用户不用
-#
-# 【不碰的】MTK 系列 (kvcedit/libkvcutil/datconf/datconf-lua/kmod-inet-diag)
-#   这些包依赖关系复杂, 容易连锁炸, 而且总共才几百 KB, 不值得冒险
-for pkg in htop nano tcpdump libpcap regs mii_mgr; do
-    remove_pkg "$pkg"
-done
-echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr)"
+TOTAL_PKGS=$(wc -l < "$PKG_LIST")
+echo "  [OK] 共 ${TOTAL_PKGS} 个包, 已写入 ${PKG_LIST}"
 
-# ---- C. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
-# filter / tee / u32 / ipv4options: 非常冷门的匹配模块
-# compat-xtables: 旧版 iptables 兼容层, 6.6 内核用 nftables 不需要
-# ipmark: 数据包标记, 很少用 (依赖 compat-xtables, 要删一起删)
-for mod in filter tee u32 ipv4options ipmark; do
-    remove_pkg "kmod-ipt-${mod}"
-    remove_pkg "iptables-mod-${mod}"
-done
-remove_pkg "kmod-ipt-compat-xtables"
-echo "  [C] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat/ipmark)"
-
-# ---- D. IPv6 用户态工具 (内核保留) ----
-# 你明确说不用 IPv6, 尽量精简用户态工具
-# ip6tables 系列: IPv6 防火墙工具
-# kmod-ipt-raw6: IPv6 raw 表
-# odhcp6c: DHCPv6 客户端
-# luci-proto-ipv6 / 6in4: LuCI IPv6 协议界面
-# odhcpd-ipv6only: IPv6 守护进程
-#
-# 【保留的】
-#   kmod-ipt-nat6: turboacc-mtk (硬件加速) 依赖, 不能删
-for pkg in ip6tables ip6tables-extra ip6tables-nft \
-           kmod-ip6tables kmod-ip6tables-extra kmod-ipt-raw6 \
-           odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
-    remove_pkg "$pkg"
-done
-echo "  [D] IPv6 用户态工具 (内核保留, 留 kmod-ipt-nat6 给 turboacc)"
-
-# ---- E. zram 内存压缩 (模板默认有, 2GB 内存不需要) ----
-# zram-swap: 用户态脚本
-# kmod-zram: 内核模块
-# kmod-lib-lzo: LZO 压缩库
-for pkg in zram-swap kmod-zram kmod-lib-lzo; do
-    remove_pkg "$pkg"
-done
-echo "  [E] zram 内存压缩 (2GB 不需要)"
-
-# ---- F. 其他 (模板默认有, 但我们不需要) ----
-# openssh-keygen: SSH 密钥生成 (dropbear 够用)
-# openssh-sftp-server: SFTP 服务器 (scp 够用)
-# resolveip: DNS 解析工具 (busybox nslookup 够用)
-# kmod-ata-core: SATA 驱动 (N60 Pro 没有 SATA)
-# kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
-# kmod-fs-btrfs: Btrfs 文件系统 (N60 Pro 用 squashfs, 不需要)
-# libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
-# libevdev: 输入设备库 (路由器不需要键盘鼠标)
-# usbutils: lsusb 等 USB 诊断工具 (依赖 libevdev, 一起删)
-# haveged: 随机数熵生成器 (6.6 内核有更好的随机源, 不需要)
-#
-# 【保留的】
-#   blockd: U 盘自动挂载, 几十KB, 留着方便
-#   libudev-zero: usbutils 依赖但我们删了 usbutils, 它也跟着没了
-for pkg in openssh-keygen openssh-sftp-server resolveip \
-           kmod-ata-core kmod-leds-ws2812b kmod-fs-btrfs \
-           libfido2 libcbor libevdev usbutils \
-           haveged; do
-    remove_pkg "$pkg"
-done
-echo "  [F] 其他 (openssh/btrfs/fido2/evdev/usbutils/ata/ws2812b/haveged)"
-
-echo "  合计移除: ${REMOVE_COUNT} 个包"
+# 也输出几个分类, 方便快速浏览
+echo ""
+echo "  --- 概览 ---"
+echo "  LuCI 应用: $(grep -c '^luci-app-' "$PKG_LIST") 个"
+echo "  LuCI 主题: $(grep -c '^luci-theme-' "$PKG_LIST") 个"
+echo "  LuCI 协议: $(grep -c '^luci-proto-' "$PKG_LIST") 个"
+echo "  LuCI 翻译: $(grep -c '^luci-i18n-' "$PKG_LIST") 个"
+echo "  内核模块: $(grep -c '^kmod-' "$PKG_LIST") 个"
+echo "  其他包:   $(grep -cv -e '^luci-' -e '^kmod-' "$PKG_LIST") 个"
 
 # ============================================================================
 # 8. 验证 (关键包缺失直接退出, 不白编译)
@@ -335,7 +259,6 @@ echo "  合计移除: ${REMOVE_COUNT} 个包"
 # 【两类检查】
 #   1. 必需包 (必须 =y, 缺了直接退出)
 #   2. 核心功能包 (确保没被误删, 缺了直接退出)
-#   3. 精简包 (只做信息展示, 不强制 - 本来就没有的也算正常)
 # ============================================================================
 echo ""
 echo "=== 验证 ==="
@@ -364,7 +287,7 @@ for p in daed luci-app-daed ddns-go luci-app-ddns-go \
 done
 
 echo ""
-echo "[核心功能 (确保没被误删)]"
+echo "[核心功能 (确保正常)]"
 for p in kmod-mt_wifi kmod-mediatek_hnat kmod-tun kmod-tcp-bbr \
          kmod-usb-storage kmod-fs-ext4 block-mount ppp ppp-mod-pppoe \
          kmod-nls-base kmod-nls-utf8 libopenssl libncurses; do
@@ -380,21 +303,6 @@ if [ "$MISSING" -gt 0 ]; then
     echo "=============================================="
     exit 1
 fi
-
-# 精简包只做信息展示, 不强制退出 (本来就没有的也算正常)
-check_removed() {
-    if grep -q "CONFIG_PACKAGE_${1} is not set" .config 2>/dev/null; then
-        echo "  [OK] ${1}: 已移除"
-    else
-        echo "  [--] ${1}: 不在配置中 (默认就没有)"
-    fi
-}
-
-echo ""
-echo "[精简的包 (信息展示)]"
-for p in luci-app-wrtbwmon htop nano zram-swap odhcp6c; do
-    check_removed "$p"
-done
 
 echo ""
 echo "[分区大小]"
@@ -414,7 +322,8 @@ echo "  新增: daed / EasyTier / ddns-go"
 echo "        samba4 / CIFS挂载 / wsdd2"
 echo "        vnstat2 / nlbwmon"
 echo "        argon / ttyd"
-echo "  精简: 移除 ${REMOVE_COUNT} 个包"
+echo "  总包数: ${TOTAL_PKGS} 个 (详见 package-list.txt)"
 echo "  CPU频率: mtk-cpufreq + cpuinfo 脚本 (不靠 autocore 包)"
 echo "  rootfs: 80MB (overlay ~420MB)"
+echo "  策略: 只加不减, 先跑通再精简"
 echo "============================================================"
