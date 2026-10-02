@@ -467,7 +467,7 @@ jobs:
             - 代理: daed (eBPF 高性能透明代理)
             - 组网: EasyTier (虚拟局域网)
             - DDNS: ddns-go (动态域名, 含 LuCI 管理界面)
-            - 共享: Samba4 服务端 + CIFS 客户端挂载 (cifs-utils + LuCI界面) + wsdd2
+            - 共享: Samba4 服务端 + CIFS 客户端挂载 (cifsmount + LuCI界面) + wsdd2
             - 流量: vnstat2 (WAN统计) + nlbwmon (设备统计)
             - 主题: luci-theme-argon
             - 工具: ttyd (网页终端, LAN免登录)
