@@ -193,8 +193,15 @@ CONFIG_PACKAGE_luci-theme-argon=y
 # luci-app-ttyd: LuCI 界面
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
+# ---- 4.11 确保 MTK WiFi 配置依赖 (防止精简误删) ----
+# mtwifi-cfg → datconf-lua → libkvcutil, 这条依赖链有时 defconfig 拉不全
+# 显式写 =y 确保都选上
+CONFIG_PACKAGE_libkvcutil=y
+CONFIG_PACKAGE_datconf-lua=y
+CONFIG_PACKAGE_kmod-inet-diag=y
+
 EOF
-echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifsmount) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifsmount) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd + MTK依赖保障"
 
 # ============================================================================
 # 5. rootfs 分区大小
