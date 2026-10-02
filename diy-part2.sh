@@ -243,7 +243,8 @@ echo "--- 7. 精简固件 (只删模板/defconfig 默认有的) ---"
 # ---- A. 被新插件替代的 (模板默认有, 我们用更好的替代了) ----
 # wrtbwmon → vnstat2 + nlbwmon (功能更强, 更准)
 remove_pkg "luci-app-wrtbwmon"
-echo "  [A] 被替代: wrtbwmon"
+remove_pkg "luci-i18n-wrtbwmon-zh-cn"
+echo "  [A] 被替代: wrtbwmon (+中文翻译)"
 
 # 【ssr-plus 和 bootstrap-mod 呢?】
 # 模板里只是有它们的子选项配置 (如 INCLUDE_xxx),
@@ -253,36 +254,46 @@ echo "  [A] 被替代: wrtbwmon"
 # htop / nano → busybox 的 top/vi 够用, 需要时 opkg 装
 # tcpdump / libpcap → 抓包工具, 很少用
 # regs / mii_mgr → 寄存器/MII 调试, 普通用户不用
-# kvcedit / libkvcutil / datconf → KVC 配置工具 (datconf 依赖 libkvcutil, 要删一起删)
-# kmod-inet-diag → 网络诊断内核模块
+# kvcedit / datconf → KVC 配置工具 (主程序, 普通用户不用)
 #
-# 【保留的】libncurses + terminfo: 才几十KB, 后期装 htop/nano 需要
+# 【保留的】
+#   libncurses + terminfo: 才几十KB, 后期装 htop/nano 需要
+#   libkvcutil: datconf-lua 依赖, mtwifi-cfg 需要 (不能删)
+#   datconf-lua: mtwifi-cfg 依赖 (不能删)
+#   kmod-inet-diag: turboacc-mtk 依赖 (不能删)
 for pkg in htop nano tcpdump libpcap regs mii_mgr \
-           kvcedit libkvcutil datconf datconf-lua kmod-inet-diag; do
+           kvcedit datconf; do
     remove_pkg "$pkg"
 done
-echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit/datconf...)"
+echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit/datconf)"
 
 # ---- C. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
 # filter / tee / u32 / ipv4options: 非常冷门的匹配模块
 # compat-xtables: 旧版 iptables 兼容层, 6.6 内核用 nftables 不需要
-for mod in filter tee u32 ipv4options; do
+# ipmark: 数据包标记, 很少用 (依赖 compat-xtables, 要删一起删)
+for mod in filter tee u32 ipv4options ipmark; do
     remove_pkg "kmod-ipt-${mod}"
     remove_pkg "iptables-mod-${mod}"
 done
 remove_pkg "kmod-ipt-compat-xtables"
-echo "  [C] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat)"
+echo "  [C] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat/ipmark)"
 
 # ---- D. IPv6 用户态工具 (内核保留) ----
-# 模板默认有 ip6tables 相关的; defconfig 还会补齐 odhcp6c / luci-proto-ipv6 等
-# 你明确说不用 IPv6, 全删掉用户态工具
-# 注意: 内核 IPv6 栈不动 (有些程序隐性依赖)
+# 你明确说不用 IPv6, 尽量精简用户态工具
+# ip6tables 系列: IPv6 防火墙工具
+# kmod-ipt-raw6: IPv6 raw 表
+# odhcp6c: DHCPv6 客户端
+# luci-proto-ipv6 / 6in4: LuCI IPv6 协议界面
+# odhcpd-ipv6only: IPv6 守护进程
+#
+# 【保留的】
+#   kmod-ipt-nat6: turboacc-mtk (硬件加速) 依赖, 不能删
 for pkg in ip6tables ip6tables-extra ip6tables-nft \
-           kmod-ip6tables kmod-ip6tables-extra kmod-ipt-raw6 kmod-ipt-nat6 \
+           kmod-ip6tables kmod-ip6tables-extra kmod-ipt-raw6 \
            odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
     remove_pkg "$pkg"
 done
-echo "  [D] IPv6 用户态工具 (内核保留)"
+echo "  [D] IPv6 用户态工具 (内核保留, 留 kmod-ipt-nat6 给 turboacc)"
 
 # ---- E. zram 内存压缩 (模板默认有, 2GB 内存不需要) ----
 # zram-swap: 用户态脚本
@@ -299,20 +310,22 @@ echo "  [E] zram 内存压缩 (2GB 不需要)"
 # resolveip: DNS 解析工具 (busybox nslookup 够用)
 # kmod-ata-core: SATA 驱动 (N60 Pro 没有 SATA)
 # kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
+# kmod-fs-btrfs: Btrfs 文件系统 (N60 Pro 用 squashfs, 不需要)
 # libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
 # libevdev: 输入设备库 (路由器不需要键盘鼠标)
+# usbutils: lsusb 等 USB 诊断工具 (依赖 libevdev, 一起删)
 # haveged: 随机数熵生成器 (6.6 内核有更好的随机源, 不需要)
 #
 # 【保留的】
 #   blockd: U 盘自动挂载, 几十KB, 留着方便
-#   libudev-zero: usbutils(lsusb) 依赖, 不能删
+#   libudev-zero: usbutils 依赖但我们删了 usbutils, 它也跟着没了
 for pkg in openssh-keygen openssh-sftp-server resolveip \
-           kmod-ata-core kmod-leds-ws2812b \
-           libfido2 libcbor libevdev \
+           kmod-ata-core kmod-leds-ws2812b kmod-fs-btrfs \
+           libfido2 libcbor libevdev usbutils \
            haveged; do
     remove_pkg "$pkg"
 done
-echo "  [F] 其他 (openssh/fido2/evdev/ata-core/ws2812b/haveged)"
+echo "  [F] 其他 (openssh/btrfs/fido2/evdev/usbutils/ata/ws2812b/haveged)"
 
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
