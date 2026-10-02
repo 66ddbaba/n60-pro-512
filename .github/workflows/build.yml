@@ -184,9 +184,8 @@ jobs:
       # 【做什么】
       #   - 修改 DTS (内存 2GB / 闪存 506.5MB / 移除 NMBM)
       #   - 确保设备定义存在
-      #   - 克隆第三方软件包
-      #   - 下载 ddns-go 二进制
-      #   - 配置 BBR / cpuinfo / uci-defaults
+      #   - 克隆第三方软件包 (EasyTier 界面)
+      #   - 配置 BBR / cpuinfo / uci-defaults / CIFS 自动重连
       #
       # 【为什么在 feeds update 之前?】
       #   我们克隆的第三方包要放进 package/ 目录,
@@ -479,10 +478,10 @@ jobs:
             - 默认 LAN IP: 10.10.6.1
 
             ### 精简内容
-            - 移除 ssr-plus / wrtbwmon / diag-core 等旧插件
-            - 移除调试工具 (htop/tcpdump/nano 等, 需要时 opkg 装)
+            - 移除 wrtbwmon (替代为 vnstat2 + nlbwmon)
+            - 移除调试工具 (htop/tcpdump/nano/regs 等, 需要时 opkg 装)
             - 移除 IPv6 用户态工具 (内核保留)
-            - 移除 zram / ebtables / 无用硬件驱动
+            - 移除 zram / 无用硬件驱动 (SATA/WS2812B 等)
 
             ### 刷入方法 (U-Boot 2025 WildEdition)
             1. 断电 → 按住重置或 Mesh 键 → 通电
