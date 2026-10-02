@@ -70,11 +70,18 @@ echo "  [OK] 仅启用 N60 Pro 设备"
 #     REDUCE_DEBUG_INFO=n   → 不能精简调试信息! 否则 BTF 不完整
 #
 #   BPF 工具链部分:
-#     USE_LLVM_HOST=y       → 用主机 LLVM 编译 BPF 程序
-#                             (GitHub runner 自带 clang, 速度快)
+#     BPF_TOOLCHAIN_BUILD_LLVM=y  → 编译 LLVM BPF 工具链 (最可靠)
+#     HAS_BPF_TOOLCHAIN=y         → 标记有 BPF 工具链 (daed 可见的门槛)
+#     NEED_BPF_TOOLCHAIN=y        → 需要 BPF 工具链
+#
+# 【为什么不用 USE_LLVM_HOST?】
+#   之前试过 USE_LLVM_HOST (用主机 clang), 但 daed 仍然缺失。
+#   可能是主机 clang 版本不满足要求, 或者检测逻辑没走通。
+#   换成编译 LLVM 的方式虽然慢一点 (~5 分钟), 但最稳。
 #
 # 【代价】
-#   内核增加 ~2-3MB (BTF 信息), 但 daed 必须要, 属于必要开销。
+#   内核增加 ~2-3MB (BTF 信息) + 编译时间 +5 分钟
+#   但 daed 必须要, 属于必要开销。
 # ============================================================================
 echo ""
 echo "--- 2. daed eBPF 内核选项 ---"
@@ -93,12 +100,15 @@ CONFIG_KERNEL_BPF_EVENTS=y
 # XDP sockets 支持
 CONFIG_XDP_SOCKETS=y
 
-# ---- BPF 工具链: 用主机 LLVM ----
-# 选项有三个: Build LLVM / Use host LLVM / Prebuilt LLVM
-# 选 host LLVM: GitHub runner 自带 clang, 不用编译 LLVM, 省时间
-CONFIG_USE_LLVM_HOST=y
+# ---- BPF 工具链: 编译 LLVM (最可靠) ----
+# 三个选项: Build LLVM / Use host LLVM / Prebuilt LLVM
+# 选 Build LLVM: 从源码编译, 版本匹配, 最可靠
+CONFIG_BPF_TOOLCHAIN_BUILD_LLVM=y
+# 标记有可用的 BPF 工具链 (daed 的 DEPENDS 门槛)
+CONFIG_HAS_BPF_TOOLCHAIN=y
+CONFIG_NEED_BPF_TOOLCHAIN=y
 EOF
-echo "  [OK] BPF + BTF + XDP + LLVM (daed 必需)"
+echo "  [OK] BPF + BTF + XDP + LLVM toolchain (daed 必需)"
 
 # ============================================================================
 # 3. 第一次 make defconfig (基础配置)
@@ -118,6 +128,29 @@ echo ""
 echo "--- 3. 第一次 defconfig (内核 + 基础配置) ---"
 make defconfig
 echo "  [OK] 第一次 defconfig 完成"
+
+# ---- BPF 诊断: 看看相关配置到底生效了没 ----
+# daed 缺失的根本原因几乎都是 BPF 工具链没配置好
+# 这里把关键符号都打出来, 方便排查
+echo ""
+echo "  [诊断] BPF 相关配置:"
+for sym in \
+    HAS_BPF_TOOLCHAIN \
+    NEED_BPF_TOOLCHAIN \
+    BPF_TOOLCHAIN_BUILD_LLVM \
+    USE_LLVM_HOST \
+    USE_LLVM_PREBUILT \
+    KERNEL_DEBUG_INFO \
+    KERNEL_DEBUG_INFO_BTF \
+    KERNEL_BPF_EVENTS \
+    XDP_SOCKETS; do
+    val=$(grep -c "^CONFIG_${sym}=y" .config 2>/dev/null || true)
+    if [ "$val" -eq 1 ]; then
+        echo "    [OK] CONFIG_${sym}=y"
+    else
+        echo "    [缺失] CONFIG_${sym}"
+    fi
+done
 
 # ============================================================================
 # 4. 新增软件包 (模板默认没有、我们需要的)
