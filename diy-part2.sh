@@ -258,7 +258,7 @@ echo "  [A] 被替代: wrtbwmon"
 #
 # 【保留的】libncurses + terminfo: 才几十KB, 后期装 htop/nano 需要
 for pkg in htop nano tcpdump libpcap regs mii_mgr \
-           kvcedit libkvcutil datconf kmod-inet-diag; do
+           kvcedit libkvcutil datconf datconf-lua kmod-inet-diag; do
     remove_pkg "$pkg"
 done
 echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit/datconf...)"
