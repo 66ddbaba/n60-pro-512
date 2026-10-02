@@ -58,25 +58,47 @@ echo "  [OK] 仅启用 N60 Pro 设备"
 # 2. daed 内核选项 (eBPF 支持)
 # ============================================================================
 # 【为什么要单独改内核配置?】
-# daed 是 eBPF 代理, 需要 BTF (BPF Type Format) 调试信息。
-# 模板默认不开 BTF, 所以必须手动加上。
-# 代价: 内核增加 ~2-3MB, 但 daed 必须要, 属于必要开销。
+# daed 是 eBPF 代理, 需要完整的 BPF + BTF 支持。
+# 模板默认配置不全, 所以必须手动补全。
+#
+# 【完整配置清单 (参考 ImmortalWrt Wiki)】
+#   内核部分:
+#     DEBUG_INFO=y          → 调试信息 (BTF 的基础)
+#     DEBUG_INFO_BTF=y      → BTF 类型信息 (daed 必需)
+#     BPF_EVENTS=y          → BPF 事件追踪
+#     XDP_SOCKETS=y         → XDP socket 支持
+#     REDUCE_DEBUG_INFO=n   → 不能精简调试信息! 否则 BTF 不完整
+#
+#   BPF 工具链部分:
+#     USE_LLVM_HOST=y       → 用主机 LLVM 编译 BPF 程序
+#                             (GitHub runner 自带 clang, 速度快)
+#
+# 【代价】
+#   内核增加 ~2-3MB (BTF 信息), 但 daed 必须要, 属于必要开销。
 # ============================================================================
 echo ""
 echo "--- 2. daed eBPF 内核选项 ---"
 cat >> .config << 'EOF'
-# BTF 调试信息 (daed 必需, 没有的话 eBPF 程序加载失败)
+# ---- 内核: 调试信息 + BTF ----
+# 完整调试信息 (BTF 的基础, 不能精简!)
 CONFIG_KERNEL_DEBUG_INFO=y
+# 取消精简调试信息 (默认 =y 会导致 BTF 不完整, daed 加载失败)
+# CONFIG_KERNEL_REDUCE_DEBUG_INFO is not set
+# BTF 类型信息 (daed 必需, 没有的话 eBPF 程序加载失败)
 CONFIG_KERNEL_DEBUG_INFO_BTF=y
+
+# ---- 内核: BPF + XDP ----
 # BPF 事件追踪支持
 CONFIG_KERNEL_BPF_EVENTS=y
-# XDP 高性能数据路径
+# XDP sockets 支持
 CONFIG_XDP_SOCKETS=y
-# 用主机 LLVM 编译 BPF 程序 (确保版本足够新)
-CONFIG_BPF_TOOLCHAIN=y
-CONFIG_BPF_TOOLCHAIN_HOST=y
+
+# ---- BPF 工具链: 用主机 LLVM ----
+# 选项有三个: Build LLVM / Use host LLVM / Prebuilt LLVM
+# 选 host LLVM: GitHub runner 自带 clang, 不用编译 LLVM, 省时间
+CONFIG_USE_LLVM_HOST=y
 EOF
-echo "  [OK] BPF + BTF + XDP (daed 必需)"
+echo "  [OK] BPF + BTF + XDP + LLVM (daed 必需)"
 
 # ============================================================================
 # 3. 第一次 make defconfig (基础配置)
@@ -142,11 +164,15 @@ CONFIG_PACKAGE_samba4-server=y
 CONFIG_PACKAGE_luci-app-samba4=y
 
 # kmod-fs-cifs: CIFS 客户端内核模块 (挂载远程 SMB 共享必须)
-# cifs-utils: CIFS 工具集 (mount.cifs 等命令行工具)
+# cifsmount: CIFS 挂载工具 (mount.cifs 命令, cifs-utils 源码包编译出来)
 # luci-app-cifs-mount: LuCI 挂载管理界面 (配置存在 UCI 里, 开机自动挂载)
 #   配合 diy-part1.sh 里的 cifs-reconnect 脚本, 断线后自动重连
+#
+# 【注意: 包名是 cifsmount, 不是 cifs-utils!】
+#   cifs-utils 是源码目录的名字, 编译出来的二进制包叫 cifsmount。
+#   写 CONFIG_PACKAGE_cifs-utils=y 是无效的。
 CONFIG_PACKAGE_kmod-fs-cifs=y
-CONFIG_PACKAGE_cifs-utils=y
+CONFIG_PACKAGE_cifsmount=y
 CONFIG_PACKAGE_luci-app-cifs-mount=y
 
 # wsdd2: Windows 网络发现 (WSD) 守护进程
@@ -177,7 +203,7 @@ CONFIG_PACKAGE_luci-theme-argon=y
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 EOF
-echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifs-utils) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifsmount) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 5. rootfs 分区大小
@@ -325,7 +351,7 @@ echo "[必需包 (缺了直接退出)]"
 for p in daed luci-app-daed ddns-go luci-app-ddns-go \
          easytier luci-app-easytier \
          samba4-server luci-app-samba4 \
-         kmod-fs-cifs cifs-utils luci-app-cifs-mount wsdd2 \
+         kmod-fs-cifs cifsmount luci-app-cifs-mount wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do
     require_pkg "$p"
