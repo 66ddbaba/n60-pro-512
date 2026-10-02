@@ -193,15 +193,9 @@ CONFIG_PACKAGE_luci-theme-argon=y
 # luci-app-ttyd: LuCI 界面
 CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
-# ---- 4.11 确保 MTK WiFi 配置依赖 (防止精简误删) ----
-# mtwifi-cfg → datconf-lua → libkvcutil, 这条依赖链有时 defconfig 拉不全
-# 显式写 =y 确保都选上
-CONFIG_PACKAGE_libkvcutil=y
-CONFIG_PACKAGE_datconf-lua=y
-CONFIG_PACKAGE_kmod-inet-diag=y
 
 EOF
-echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifsmount) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd + MTK依赖保障"
+echo "  [OK] 新增: daed / ddns-go / EasyTier / Samba / CIFS(cifsmount) / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 5. rootfs 分区大小
@@ -261,18 +255,13 @@ echo "  [A] 被替代: wrtbwmon (+中文翻译)"
 # htop / nano → busybox 的 top/vi 够用, 需要时 opkg 装
 # tcpdump / libpcap → 抓包工具, 很少用
 # regs / mii_mgr → 寄存器/MII 调试, 普通用户不用
-# kvcedit / datconf → KVC 配置工具 (主程序, 普通用户不用)
 #
-# 【保留的】
-#   libncurses + terminfo: 才几十KB, 后期装 htop/nano 需要
-#   libkvcutil: datconf-lua 依赖, mtwifi-cfg 需要 (不能删)
-#   datconf-lua: mtwifi-cfg 依赖 (不能删)
-#   kmod-inet-diag: turboacc-mtk 依赖 (不能删)
-for pkg in htop nano tcpdump libpcap regs mii_mgr \
-           kvcedit datconf; do
+# 【不碰的】MTK 系列 (kvcedit/libkvcutil/datconf/datconf-lua/kmod-inet-diag)
+#   这些包依赖关系复杂, 容易连锁炸, 而且总共才几百 KB, 不值得冒险
+for pkg in htop nano tcpdump libpcap regs mii_mgr; do
     remove_pkg "$pkg"
 done
-echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit/datconf)"
+echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr)"
 
 # ---- C. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
 # filter / tee / u32 / ipv4options: 非常冷门的匹配模块
