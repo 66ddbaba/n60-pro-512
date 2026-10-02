@@ -246,6 +246,25 @@ jobs:
           bash $GITHUB_WORKSPACE/diy-part2.sh
 
       # ============================================================
+      # Step 7.5: 上传包列表 (供精简分析)
+      # ============================================================
+      # 【为什么要上传?】
+      # diy-part2.sh 会生成 package-list.txt (所有选中的包, 每行一个)。
+      # 即使编译失败, 我们也能拿到这个列表, 分析哪些包可以精简。
+      # 同时也上传 .config, 方便排查配置问题。
+      # ============================================================
+      - name: Upload package list
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: Package-List
+          path: |
+            openwrt/package-list.txt
+            openwrt/.config
+          retention-days: 14
+          if-no-files-found: warn
+
+      # ============================================================
       # Step 8: 下载源码包
       # ============================================================
       # 【这一步做什么】
