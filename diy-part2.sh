@@ -58,57 +58,58 @@ echo "  [OK] 仅启用 N60 Pro 设备"
 # 2. daed 内核选项 (eBPF 支持)
 # ============================================================================
 # 【为什么要单独改内核配置?】
-# daed 是 eBPF 代理, 需要完整的 BPF + BTF 支持。
+# daed 是 eBPF 代理, 需要完整的 BPF + BTF + cgroup 支持。
 # 模板默认配置不全, 所以必须手动补全。
 #
-# 【完整配置清单 (参考 ImmortalWrt Wiki)】
-#   内核部分:
-#     DEBUG_INFO=y          → 调试信息 (BTF 的基础)
-#     DEBUG_INFO_BTF=y      → BTF 类型信息 (daed 必需)
-#     BPF_EVENTS=y          → BPF 事件追踪
-#     XDP_SOCKETS=y         → XDP socket 支持
-#     REDUCE_DEBUG_INFO=n   → 不能精简调试信息! 否则 BTF 不完整
+# 【完整配置清单 (参考 QiuSimons/luci-app-daed README)】
+#   基础开关:
+#     DEVEL=y                 → 开发模式 (BPF 工具链选项可见的前提)
 #
-#   BPF 工具链部分:
-#     BPF_TOOLCHAIN_BUILD_LLVM=y  → 编译 LLVM BPF 工具链 (最可靠)
-#     HAS_BPF_TOOLCHAIN=y         → 标记有 BPF 工具链 (daed 可见的门槛)
-#     NEED_BPF_TOOLCHAIN=y        → 需要 BPF 工具链
+#   内核调试信息 (BTF 基础):
+#     DEBUG_INFO=y            → 完整调试信息
+#     DEBUG_INFO_REDUCED=n    → 不能精简! 精简了 BTF 不完整
+#     DEBUG_INFO_BTF=y        → BTF 类型信息 (daed 运行必需)
 #
-# 【为什么不用 USE_LLVM_HOST?】
-#   之前试过 USE_LLVM_HOST (用主机 clang), 但 daed 仍然缺失。
-#   可能是主机 clang 版本不满足要求, 或者检测逻辑没走通。
-#   换成编译 LLVM 的方式虽然慢一点 (~5 分钟), 但最稳。
+#   内核 BPF 功能:
+#     CGROUPS=y               → cgroup 支持 (BPF 依赖)
+#     CGROUP_BPF=y            → cgroup BPF
+#     BPF_EVENTS=y            → BPF 事件追踪
+#     XDP_SOCKETS=y           → XDP sockets
+#
+#   BPF 工具链:
+#     BPF_TOOLCHAIN_HOST=y    → 用主机 LLVM 编译 BPF 程序
+#
+#   内核模块 (daed 运行时依赖):
+#     kmod-xdp-sockets-diag   → XDP socket 诊断
 #
 # 【代价】
-#   内核增加 ~2-3MB (BTF 信息) + 编译时间 +5 分钟
-#   但 daed 必须要, 属于必要开销。
+#   内核增加 ~2-3MB (BTF 信息), 但 daed 必须要。
 # ============================================================================
 echo ""
 echo "--- 2. daed eBPF 内核选项 ---"
 cat >> .config << 'EOF'
+# ---- 基础: 开发模式 (BPF 选项可见的前提) ----
+CONFIG_DEVEL=y
+
 # ---- 内核: 调试信息 + BTF ----
-# 完整调试信息 (BTF 的基础, 不能精简!)
 CONFIG_KERNEL_DEBUG_INFO=y
-# 取消精简调试信息 (默认 =y 会导致 BTF 不完整, daed 加载失败)
-# CONFIG_KERNEL_REDUCE_DEBUG_INFO is not set
-# BTF 类型信息 (daed 必需, 没有的话 eBPF 程序加载失败)
+# 不能精简调试信息 (精简了 BTF 不完整, dae 加载失败)
+# CONFIG_KERNEL_DEBUG_INFO_REDUCED is not set
 CONFIG_KERNEL_DEBUG_INFO_BTF=y
 
-# ---- 内核: BPF + XDP ----
-# BPF 事件追踪支持
+# ---- 内核: cgroup + BPF ----
+CONFIG_KERNEL_CGROUPS=y
+CONFIG_KERNEL_CGROUP_BPF=y
 CONFIG_KERNEL_BPF_EVENTS=y
-# XDP sockets 支持
 CONFIG_XDP_SOCKETS=y
 
-# ---- BPF 工具链: 编译 LLVM (最可靠) ----
-# 三个选项: Build LLVM / Use host LLVM / Prebuilt LLVM
-# 选 Build LLVM: 从源码编译, 版本匹配, 最可靠
-CONFIG_BPF_TOOLCHAIN_BUILD_LLVM=y
-# 标记有可用的 BPF 工具链 (daed 的 DEPENDS 门槛)
-CONFIG_HAS_BPF_TOOLCHAIN=y
-CONFIG_NEED_BPF_TOOLCHAIN=y
+# ---- BPF 工具链: 用主机 LLVM ----
+CONFIG_BPF_TOOLCHAIN_HOST=y
+
+# ---- 内核模块: daed 运行时依赖 ----
+CONFIG_PACKAGE_kmod-xdp-sockets-diag=y
 EOF
-echo "  [OK] BPF + BTF + XDP + LLVM toolchain (daed 必需)"
+echo "  [OK] DEVEL + BTF + cgroup + BPF + XDP + LLVM (daed 必需)"
 
 # ============================================================================
 # 3. 第一次 make defconfig (基础配置)
@@ -135,15 +136,19 @@ echo "  [OK] 第一次 defconfig 完成"
 echo ""
 echo "  [诊断] BPF 相关配置:"
 for sym in \
-    HAS_BPF_TOOLCHAIN \
-    NEED_BPF_TOOLCHAIN \
-    BPF_TOOLCHAIN_BUILD_LLVM \
-    USE_LLVM_HOST \
-    USE_LLVM_PREBUILT \
+    DEVEL \
     KERNEL_DEBUG_INFO \
     KERNEL_DEBUG_INFO_BTF \
+    KERNEL_CGROUPS \
+    KERNEL_CGROUP_BPF \
     KERNEL_BPF_EVENTS \
-    XDP_SOCKETS; do
+    XDP_SOCKETS \
+    BPF_TOOLCHAIN_HOST \
+    BPF_TOOLCHAIN_BUILD_LLVM \
+    USE_LLVM_HOST \
+    HAS_BPF_TOOLCHAIN \
+    NEED_BPF_TOOLCHAIN \
+    PACKAGE_kmod-xdp-sockets-diag; do
     val=$(grep -c "^CONFIG_${sym}=y" .config 2>/dev/null || true)
     if [ "$val" -eq 1 ]; then
         echo "    [OK] CONFIG_${sym}=y"
