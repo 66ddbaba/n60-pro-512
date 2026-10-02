@@ -57,33 +57,19 @@ echo "  [OK] 仅启用 N60 Pro 设备"
 # ============================================================================
 # 2. daed 内核选项 (eBPF 支持)
 # ============================================================================
-# 【为什么要单独改内核配置?】
-# daed 是 eBPF 代理, 需要完整的 BPF + BTF + cgroup 支持。
-# 模板默认配置不全, 所以必须手动补全。
+# daed 是 eBPF 透明代理, 需要内核支持 BPF + BTF + cgroup。
+# 模板默认配置不全, 这里手动补全。
 #
-# 【完整配置清单 (参考 QiuSimons/luci-app-daed README)】
-#   基础开关:
-#     DEVEL=y                 → 开发模式 (BPF 工具链选项可见的前提)
+# 关键配置:
+#   DEVEL=y                 → 开发模式 (BPF 工具链选项可见的前提)
+#   DEBUG_INFO=y            → 完整调试信息 (BTF 的基础)
+#   DEBUG_INFO_BTF=y        → BTF 类型信息 (daed 运行必需)
+#   CGROUPS / CGROUP_BPF    → cgroup + BPF 支持
+#   BPF_EVENTS / XDP_SOCKETS → BPF 事件 + XDP socket
+#   BPF_TOOLCHAIN_HOST=y    → 用主机 LLVM 编译 BPF 程序
+#   kmod-xdp-sockets-diag   → daed 运行时依赖的内核模块
 #
-#   内核调试信息 (BTF 基础):
-#     DEBUG_INFO=y            → 完整调试信息
-#     DEBUG_INFO_REDUCED=n    → 不能精简! 精简了 BTF 不完整
-#     DEBUG_INFO_BTF=y        → BTF 类型信息 (daed 运行必需)
-#
-#   内核 BPF 功能:
-#     CGROUPS=y               → cgroup 支持 (BPF 依赖)
-#     CGROUP_BPF=y            → cgroup BPF
-#     BPF_EVENTS=y            → BPF 事件追踪
-#     XDP_SOCKETS=y           → XDP sockets
-#
-#   BPF 工具链:
-#     BPF_TOOLCHAIN_HOST=y    → 用主机 LLVM 编译 BPF 程序
-#
-#   内核模块 (daed 运行时依赖):
-#     kmod-xdp-sockets-diag   → XDP socket 诊断
-#
-# 【代价】
-#   内核增加 ~2-3MB (BTF 信息), 但 daed 必须要。
+# 代价: 内核增加 ~2-3MB (BTF 信息), daed 必需。
 # ============================================================================
 echo ""
 echo "--- 2. daed eBPF 内核选项 ---"
@@ -114,48 +100,15 @@ echo "  [OK] DEVEL + BTF + cgroup + BPF + XDP + LLVM (daed 必需)"
 # ============================================================================
 # 3. 第一次 make defconfig (基础配置)
 # ============================================================================
-# 【为什么要两次 defconfig?】
-#   第一次: 只设置了目标平台、设备、内核选项 (BPF/BTF 等)
-#          让内核配置先稳定下来, 所有内核符号都解析完成。
-#   第二次: 加完所有软件包后再跑一次, 补齐依赖。
-#
-# 【为什么不一次搞定?】
-#   有些软件包 (比如 daed) 依赖内核配置 (BPF/BTF)。
-#   如果内核配置还没完全解析就加包, make defconfig 会认为
-#   "依赖不满足" 而把这些包踢掉。
-#   分两次就能避免这个问题。
+# 分两次 defconfig 的原因:
+#   第一次: 先稳定内核配置 (BPF/BTF 等), 让所有内核符号解析完成
+#   第二次: 加完软件包后再跑一次, 补齐依赖
+# 这样 daed 这种依赖内核配置的包不会被踢掉。
 # ============================================================================
 echo ""
 echo "--- 3. 第一次 defconfig (内核 + 基础配置) ---"
 make defconfig
 echo "  [OK] 第一次 defconfig 完成"
-
-# ---- BPF 诊断: 看看相关配置到底生效了没 ----
-# daed 缺失的根本原因几乎都是 BPF 工具链没配置好
-# 这里把关键符号都打出来, 方便排查
-echo ""
-echo "  [诊断] BPF 相关配置:"
-for sym in \
-    DEVEL \
-    KERNEL_DEBUG_INFO \
-    KERNEL_DEBUG_INFO_BTF \
-    KERNEL_CGROUPS \
-    KERNEL_CGROUP_BPF \
-    KERNEL_BPF_EVENTS \
-    XDP_SOCKETS \
-    BPF_TOOLCHAIN_HOST \
-    BPF_TOOLCHAIN_BUILD_LLVM \
-    USE_LLVM_HOST \
-    HAS_BPF_TOOLCHAIN \
-    NEED_BPF_TOOLCHAIN \
-    PACKAGE_kmod-xdp-sockets-diag; do
-    val=$(grep -c "^CONFIG_${sym}=y" .config 2>/dev/null || true)
-    if [ "$val" -eq 1 ]; then
-        echo "    [OK] CONFIG_${sym}=y"
-    else
-        echo "    [缺失] CONFIG_${sym}"
-    fi
-done
 
 # ============================================================================
 # 4. 新增软件包 (模板默认没有、我们需要的)
@@ -300,15 +253,15 @@ echo "  [A] 被替代: wrtbwmon"
 # htop / nano → busybox 的 top/vi 够用, 需要时 opkg 装
 # tcpdump / libpcap → 抓包工具, 很少用
 # regs / mii_mgr → 寄存器/MII 调试, 普通用户不用
-# kvcedit / libkvcutil → KVC 配置工具
+# kvcedit / libkvcutil / datconf → KVC 配置工具 (datconf 依赖 libkvcutil, 要删一起删)
 # kmod-inet-diag → 网络诊断内核模块
 #
 # 【保留的】libncurses + terminfo: 才几十KB, 后期装 htop/nano 需要
 for pkg in htop nano tcpdump libpcap regs mii_mgr \
-           kvcedit libkvcutil kmod-inet-diag; do
+           kvcedit libkvcutil datconf kmod-inet-diag; do
     remove_pkg "$pkg"
 done
-echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit...)"
+echo "  [B] 调试工具 (htop/nano/tcpdump/regs/mii_mgr/kvcedit/datconf...)"
 
 # ---- C. 冷门 iptables 模块 (模板默认有, 家用用不到) ----
 # filter / tee / u32 / ipv4options: 非常冷门的匹配模块
@@ -324,7 +277,8 @@ echo "  [C] 冷门 iptables 模块 (filter/tee/u32/ipv4options/compat)"
 # 模板默认有 ip6tables 相关的; defconfig 还会补齐 odhcp6c / luci-proto-ipv6 等
 # 你明确说不用 IPv6, 全删掉用户态工具
 # 注意: 内核 IPv6 栈不动 (有些程序隐性依赖)
-for pkg in ip6tables-extra ip6tables-nft kmod-ipt-raw6 kmod-ip6tables-extra \
+for pkg in ip6tables ip6tables-extra ip6tables-nft \
+           kmod-ip6tables kmod-ip6tables-extra kmod-ipt-raw6 kmod-ipt-nat6 \
            odhcp6c odhcpd-ipv6only luci-proto-ipv6 luci-proto-6in4; do
     remove_pkg "$pkg"
 done
@@ -348,12 +302,14 @@ echo "  [E] zram 内存压缩 (2GB 不需要)"
 # kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
 # libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
 # libevdev / libudev-zero: 输入设备库 (路由器不需要键盘鼠标)
+# haveged: 随机数熵生成器 (6.6 内核有更好的随机源, 不需要)
 for pkg in blockd openssh-keygen openssh-sftp-server resolveip \
            kmod-ata-core kmod-leds-ws2812b \
-           libfido2 libcbor libevdev libudev-zero; do
+           libfido2 libcbor libevdev libudev-zero \
+           haveged; do
     remove_pkg "$pkg"
 done
-echo "  [F] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b...)"
+echo "  [F] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b/haveged)"
 
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 

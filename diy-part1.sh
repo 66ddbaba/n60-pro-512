@@ -189,29 +189,14 @@ fi
 # ============================================================================
 # 4. 克隆第三方软件包
 # ============================================================================
-# 【默认 feed 里已经有的, 不用克隆!】
-# padavanonly 的 immortalwrt-mt798x-6.6 仓库里, 默认 packages + luci feed
-# 已经包含了大部分常用包, 直接在 diy-part2.sh 里选上就行:
-#   - daed / luci-app-daed        (eBPF 代理)
-#   - ddns-go / luci-app-ddns-go  (动态域名)
-#   - samba4 / luci-app-samba4    (文件共享)
-#   - cifs-utils / luci-app-cifs-mount (CIFS 挂载)
-#   - wsdd2                       (网络发现)
-#   - vnstat2 / luci-app-vnstat2  (流量统计)
-#   - nlbwmon / luci-app-nlbwmon  (设备流量)
-#   - ttyd / luci-app-ttyd        (网页终端)
-#   - luci-theme-argon            (argon 主题)
+# 默认 feed 里已经有的不用克隆, 直接在 diy-part2.sh 里选:
+#   daed / ddns-go / samba4 / cifsmount / wsdd2 / vnstat2 / nlbwmon / ttyd / argon
 #
-# 【真正需要克隆的只有 1 个】
-#   - luci-app-easytier (EasyTier 的 LuCI 界面, feed 里没有)
-#     easytier 主程序也在默认 feed 里, 但界面没有
+# 真正需要克隆的只有:
+#   luci-app-easytier (EasyTier 的 LuCI 界面, feed 里没有)
 #
-# 【镜像回退机制】
-#   第 1-2 次: 直连 GitHub
-#   第 3 次:   走 ghproxy 镜像 (国内 CDN, 对付 GitHub 网络抽风)
-#
-# 【--depth 1 的作用】
-# 只克隆最新一次提交, 不下载完整历史, 省时间省空间。
+# 镜像回退: 前 2 次直连 GitHub, 第 3 次走 ghproxy 镜像
+# --depth 1: 只克隆最新提交, 省时间省空间
 # ============================================================================
 echo ""
 echo "--- 4. 克隆第三方包 ---"
@@ -458,7 +443,7 @@ cat > files/usr/bin/cifs-reconnect << 'CREOF'
 #  检测 CIFS 挂载是否僵死, 如果是则卸载后重新挂载
 # ============================================================
 
-# 从 UCI 读取所有 CIFS 挂载点
+# 从 UCI 读取所有 CIFS 挂载点 (本地路径)
 get_mount_points() {
     uci show cifs 2>/dev/null | grep "\.path=" | cut -d'=' -f2 | tr -d "'"
 }
@@ -476,19 +461,23 @@ is_mount_healthy() {
 # 重新挂载单个挂载点 (根据 UCI 配置名)
 remount_share() {
     local cfg="$1"
-    local server path username password options
+    local server share path username password options
 
     server=$(uci get "cifs.${cfg}.server" 2>/dev/null)
+    share=$(uci get "cifs.${cfg}.share" 2>/dev/null)
     path=$(uci get "cifs.${cfg}.path" 2>/dev/null)
     username=$(uci get "cifs.${cfg}.username" 2>/dev/null)
     password=$(uci get "cifs.${cfg}.password" 2>/dev/null)
     options=$(uci get "cifs.${cfg}.options" 2>/dev/null)
-    local_path=$(uci get "cifs.${cfg}.path" 2>/dev/null)
 
-    [ -z "$server" ] || [ -z "$path" ] && return 1
+    # 必填项: server + share
+    [ -z "$server" ] || [ -z "$share" ] && return 1
+
+    # 本地挂载点: 优先用 UCI 配置的 path, 没有就用 /mnt/<配置名>
+    [ -z "$path" ] && path="/mnt/${cfg}"
 
     # 先卸载 (lazy unmount, 不管有没有进程占用都强制卸载)
-    umount -l "/mnt/${cfg}" 2>/dev/null
+    umount -l "$path" 2>/dev/null
 
     # 构造挂载参数
     local opts=""
@@ -498,13 +487,13 @@ remount_share() {
     opts="${opts#,}"  # 去掉开头的逗号
 
     # 确保挂载目录存在
-    mkdir -p "/mnt/${cfg}"
+    mkdir -p "$path"
 
     # 重新挂载
     if [ -n "$opts" ]; then
-        mount -t cifs "//${server}${path}" "/mnt/${cfg}" -o "$opts" 2>/dev/null
+        mount -t cifs "//${server}/${share}" "$path" -o "$opts" 2>/dev/null
     else
-        mount -t cifs "//${server}${path}" "/mnt/${cfg}" 2>/dev/null
+        mount -t cifs "//${server}/${share}" "$path" 2>/dev/null
     fi
 
     return $?
@@ -518,7 +507,9 @@ fi
 
 # 遍历所有 mount 类型的配置节
 for cfg in $(uci show cifs 2>/dev/null | grep "=mount$" | cut -d'.' -f2 | cut -d'=' -f1); do
-    mp="/mnt/${cfg}"
+    # 读取本地挂载点
+    mp=$(uci get "cifs.${cfg}.path" 2>/dev/null)
+    [ -z "$mp" ] && mp="/mnt/${cfg}"
 
     # 挂载点不存在或没挂载 → 跳过 (可能用户还没配置)
     if ! mountpoint -q "$mp" 2>/dev/null; then
