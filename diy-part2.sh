@@ -294,7 +294,6 @@ done
 echo "  [E] zram 内存压缩 (2GB 不需要)"
 
 # ---- F. 其他 (模板默认有, 但我们不需要) ----
-# blockd: 块设备自动挂载 (用 block-mount 手动挂载更可控)
 # openssh-keygen: SSH 密钥生成 (dropbear 够用)
 # openssh-sftp-server: SFTP 服务器 (scp 够用)
 # resolveip: DNS 解析工具 (busybox nslookup 够用)
@@ -303,13 +302,15 @@ echo "  [E] zram 内存压缩 (2GB 不需要)"
 # libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
 # libevdev / libudev-zero: 输入设备库 (路由器不需要键盘鼠标)
 # haveged: 随机数熵生成器 (6.6 内核有更好的随机源, 不需要)
-for pkg in blockd openssh-keygen openssh-sftp-server resolveip \
+#
+# 【保留的】blockd: U 盘自动挂载, 几十KB, 留着方便
+for pkg in openssh-keygen openssh-sftp-server resolveip \
            kmod-ata-core kmod-leds-ws2812b \
            libfido2 libcbor libevdev libudev-zero \
            haveged; do
     remove_pkg "$pkg"
 done
-echo "  [F] 其他 (blockd/openssh/fido2/evdev/ata-core/ws2812b/haveged)"
+echo "  [F] 其他 (openssh/fido2/evdev/ata-core/ws2812b/haveged)"
 
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
