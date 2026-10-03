@@ -155,8 +155,10 @@ echo ""
 echo "--- 5. 系统优化 ---"
 
 # 5.1 BBR 拥塞控制
-mkdir -p files/etc/modules.d files/etc/sysctl.d
-echo "tcp_bbr" > files/etc/modules.d/tcp-bbr
+# modules-boot.d 确保模块在 sysctl 之前加载
+# sysctl.d 设置默认拥塞控制算法
+mkdir -p files/etc/modules-boot.d files/etc/sysctl.d
+echo "tcp_bbr" > files/etc/modules-boot.d/tcp-bbr
 cat > files/etc/sysctl.d/12-tcp-bbr.conf << 'EOF'
 net.core.default_qdisc = fq
 net.ipv4.tcp_congestion_control = bbr
@@ -176,16 +178,24 @@ fi
 
 cat > files/sbin/cpuinfo << 'CPUINFO'
 #!/bin/sh
-# 自定义 cpuinfo - 配合 mtk-cpufreq 显示真实 CPU 频率
-# 输出格式与 autocore 兼容, LuCI 能正确显示
+# 自定义 cpuinfo - 在原始架构信息后追加 CPU 型号/频率/温度
+# 输出格式: "ARMv8 Processor rev 4 (v8l) x 4 (MT7986A @ 2.30GHz 48.2°C)"
 
-# 1. CPU 型号和频率
+# 1. 读取原始架构信息
+HW_INFO=$(grep -m1 "model name" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+[ -z "$HW_INFO" ] && HW_INFO=$(grep -m1 "Hardware" /proc/cpuinfo 2>/dev/null | cut -d: -f2 | sed 's/^ *//')
+[ -z "$HW_INFO" ] && HW_INFO="ARMv8 Processor"
+
+# 2. 核心数
+CORES=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo 4)
+
+# 3. mtk-cpufreq 读取型号和频率
 MTK_INFO=""
 if command -v mtk-cpufreq >/dev/null 2>&1; then
     MTK_INFO=$(mtk-cpufreq 2>/dev/null | head -1 | tr -d '\r')
 fi
 
-# 2. 温度
+# 4. 温度
 TEMP=""
 for i in 0 1 2; do
     t=$(cat /sys/class/thermal/thermal_zone${i}/temp 2>/dev/null)
@@ -193,16 +203,13 @@ for i in 0 1 2; do
 done
 [ -n "$TEMP" ] && TEMP=$(awk "BEGIN {printf \"%.1f\", $TEMP/1000}")
 
-# 3. 核心数
-CORES=$(grep -c "processor" /proc/cpuinfo 2>/dev/null || echo 4)
-
-# 4. 输出
+# 5. 拼接输出 (原始架构信息 + 括号内追加 CPU/频率/温度)
 if [ -n "$MTK_INFO" ] && [ -n "$TEMP" ]; then
-    echo "${MTK_INFO} x ${CORES} (${TEMP}°C)"
+    echo "${HW_INFO} x ${CORES} (${MTK_INFO} ${TEMP}°C)"
 elif [ -n "$MTK_INFO" ]; then
-    echo "${MTK_INFO} x ${CORES}"
+    echo "${HW_INFO} x ${CORES} (${MTK_INFO})"
 else
-    echo "MediaTek MT7986A x ${CORES}"
+    echo "${HW_INFO} x ${CORES}"
 fi
 CPUINFO
 chmod +x files/sbin/cpuinfo
@@ -213,10 +220,6 @@ mkdir -p files/etc/uci-defaults
 cat > files/etc/uci-defaults/99-custom-settings << 'UCIEOF'
 #!/bin/sh
 # 首次启动执行一次, 执行后自动删除
-
-# BBR 确保生效
-modprobe tcp_bbr 2>/dev/null || true
-sysctl -p /etc/sysctl.d/12-tcp-bbr.conf >/dev/null 2>&1 || true
 
 # Samba4: 多通道 + 访客访问
 if uci get samba4.@samba4[0] >/dev/null 2>&1; then
@@ -241,97 +244,95 @@ uci commit network
 exit 0
 UCIEOF
 chmod +x files/etc/uci-defaults/99-custom-settings
-echo "  [OK] uci-defaults (BBR + Samba + ttyd + LAN IP)"
+echo "  [OK] uci-defaults (Samba + ttyd + LAN IP)"
 
-# 5.4 CIFS 自动重连
-mkdir -p files/usr/bin
-cat > files/usr/bin/cifs-reconnect << 'CREOF'
+# 5.4 USB 磁盘自动共享 (hotplug + samba4)
+mkdir -p files/etc/hotplug.d/block
+cat > files/etc/hotplug.d/block/50-usb-samba << 'HPEOF'
 #!/bin/sh
-# CIFS 自动重连 - 检测挂载僵死并自动恢复
+# USB 磁盘热插拔 - 自动添加/移除 Samba 共享
+# 触发: block add/remove 事件
 
-# 读取所有 CIFS 挂载点
-get_mount_points() {
-    uci show cifs 2>/dev/null | grep "\.path=" | cut -d'=' -f2 | tr -d "'"
+[ "$ACTION" = "add" -o "$ACTION" = "remove" ] || exit 0
+[ -z "$DEVICENAME" ] && exit 0
+
+# 只处理分区 (sda1, sdb2 等, 跳过整块盘 sda)
+echo "$DEVICENAME" | grep -qE '[0-9]+$' || exit 0
+
+MOUNT_POINT=""
+
+# 查找挂载点
+find_mount() {
+    local dev="/dev/$1"
+    while read -r line; do
+        case "$line" in
+            "$dev "*)
+                echo "$line" | awk '{print $2}'
+                return 0
+                ;;
+        esac
+    done < /proc/mounts
+    return 1
 }
 
-# 检查挂载是否正常 (5秒超时)
-is_mount_healthy() {
-    local mp="$1"
-    [ -d "$mp" ] || return 1
-    timeout 5 ls "$mp" >/dev/null 2>&1
-    return $?
+update_samba_share() {
+    local action="$1"
+    local name="$2"
+    local path="$3"
+
+    case "$action" in
+        add)
+            # 检查是否已存在同名共享
+            if uci get "samba4.${name}" >/dev/null 2>&1; then
+                return 0
+            fi
+            uci set "samba4.${name}=sambashare"
+            uci set "samba4.${name}.name=${name}"
+            uci set "samba4.${name}.path=${path}"
+            uci set "samba4.${name}.read_only=no"
+            uci set "samba4.${name}.guest_ok=yes"
+            uci set "samba4.${name}.create_mask=0777"
+            uci set "samba4.${name}.dir_mask=0777"
+            uci commit samba4
+            /etc/init.d/samba4 reload 2>/dev/null
+            logger -t usb-samba "添加共享: ${name} -> ${path}"
+            ;;
+        remove)
+            if uci get "samba4.${name}" >/dev/null 2>&1; then
+                uci delete "samba4.${name}"
+                uci commit samba4
+                /etc/init.d/samba4 reload 2>/dev/null
+                logger -t usb-samba "移除共享: ${name}"
+            fi
+            ;;
+    esac
 }
 
-# 重新挂载单个共享
-remount_share() {
-    local cfg="$1"
-    local server share path username password options
-
-    server=$(uci get "cifs.${cfg}.server" 2>/dev/null)
-    share=$(uci get "cifs.${cfg}.share" 2>/dev/null)
-    path=$(uci get "cifs.${cfg}.path" 2>/dev/null)
-    username=$(uci get "cifs.${cfg}.username" 2>/dev/null)
-    password=$(uci get "cifs.${cfg}.password" 2>/dev/null)
-    options=$(uci get "cifs.${cfg}.options" 2>/dev/null)
-
-    [ -z "$server" ] || [ -z "$share" ] && return 1
-    [ -z "$path" ] && path="/mnt/${cfg}"
-
-    umount -l "$path" 2>/dev/null
-
-    local opts=""
-    [ -n "$username" ] && opts="${opts},username=${username}"
-    [ -n "$password" ] && opts="${opts},password=${password}"
-    [ -n "$options" ] && opts="${opts},${options}"
-    opts="${opts#,}"
-
-    mkdir -p "$path"
-
-    if [ -n "$opts" ]; then
-        mount -t cifs "//${server}/${share}" "$path" -o "$opts" 2>/dev/null
-    else
-        mount -t cifs "//${server}/${share}" "$path" 2>/dev/null
-    fi
-    return $?
-}
-
-# 主程序
-if ! uci show cifs >/dev/null 2>&1; then
-    exit 0
+# 等几秒让挂载完成
+if [ "$ACTION" = "add" ]; then
+    sleep 3
 fi
 
-for cfg in $(uci show cifs 2>/dev/null | grep "=mount$" | cut -d'.' -f2 | cut -d'=' -f1); do
-    mp=$(uci get "cifs.${cfg}.path" 2>/dev/null)
-    [ -z "$mp" ] && mp="/mnt/${cfg}"
+MOUNT_POINT=$(find_mount "$DEVICENAME")
 
-    if ! mountpoint -q "$mp" 2>/dev/null; then
-        continue
-    fi
-
-    if is_mount_healthy "$mp"; then
-        continue
-    fi
-
-    logger -t cifs-reconnect "挂载点 $mp 异常, 尝试重连..."
-    if remount_share "$cfg"; then
-        logger -t cifs-reconnect "  [OK] 重连成功: $mp"
-    else
-        logger -t cifs-reconnect "  [失败] 重连失败: $mp"
-    fi
-done
+if [ "$ACTION" = "add" ] && [ -n "$MOUNT_POINT" ]; then
+    SHARE_NAME=$(basename "$MOUNT_POINT")
+    [ -z "$SHARE_NAME" ] && SHARE_NAME="$DEVICENAME"
+    update_samba_share "add" "$SHARE_NAME" "$MOUNT_POINT"
+elif [ "$ACTION" = "remove" ]; then
+    # 移除时可能已经卸载了, 用设备名反查共享名
+    for s in $(uci show samba4 2>/dev/null | grep "=sambashare" | cut -d. -f2 | cut -d= -f1); do
+        sp=$(uci get "samba4.${s}.path" 2>/dev/null)
+        if echo "$sp" | grep -q "$DEVICENAME"; then
+            update_samba_share "remove" "$s" "$sp"
+        fi
+    done
+fi
 
 exit 0
-CREOF
-chmod +x files/usr/bin/cifs-reconnect
-
-# 添加 cron 定时任务
-cat >> files/etc/uci-defaults/99-custom-settings << 'CRONEOF'
-
-# CIFS 自动重连 cron (每分钟检测)
-echo "* * * * * /usr/bin/cifs-reconnect" >> /etc/crontabs/root
-logger -t uci-defaults "已启用 CIFS 自动重连"
-CRONEOF
-echo "  [OK] CIFS 自动重连"
+HPEOF
+chmod +x files/etc/hotplug.d/block/50-usb-samba
+echo "  [OK] USB 磁盘自动共享 (hotplug + samba4)"
 
 # ============================================================================
 # 完成
@@ -342,5 +343,6 @@ echo "  DIY Part 1 完成!"
 echo "============================================================"
 echo "  DTS: 内存 2GB / 无 NMBM / UBI 506.5MB"
 echo "  第三方包: luci-app-easytier"
-echo "  系统优化: BBR + CPU频率 + uci-defaults + CIFS自动重连"
+echo "  系统优化: BBR + CPU频率 + uci-defaults"
+echo "  USB存储: 自动挂载 + 自动Samba共享 + ext4/exFAT/NTFS3/VFAT"
 echo "============================================================"

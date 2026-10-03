@@ -85,13 +85,18 @@ CONFIG_PACKAGE_luci-app-easytier=y
 CONFIG_PACKAGE_ddns-go=y
 CONFIG_PACKAGE_luci-app-ddns-go=y
 
-# Samba4 + CIFS 挂载 + wsdd2
+# Samba4 + wsdd2 (USB存储自动共享)
 CONFIG_PACKAGE_samba4-server=y
 CONFIG_PACKAGE_luci-app-samba4=y
-CONFIG_PACKAGE_kmod-fs-cifs=y
-CONFIG_PACKAGE_cifsmount=y
-CONFIG_PACKAGE_luci-app-cifs-mount=y
 CONFIG_PACKAGE_wsdd2=y
+CONFIG_PACKAGE_block-mount=y
+CONFIG_PACKAGE_kmod-fs-exfat=y
+CONFIG_PACKAGE_kmod-fs-vfat=y
+CONFIG_PACKAGE_kmod-fs-ntfs3=y
+CONFIG_PACKAGE_ntfs3-mount=y
+CONFIG_PACKAGE_kmod-usb-storage=y
+CONFIG_PACKAGE_kmod-usb-storage-extras=y
+CONFIG_PACKAGE_kmod-usb-storage-uas=y
 
 # 流量统计: vnstat2 + nlbwmon
 CONFIG_PACKAGE_vnstat2=y
@@ -106,7 +111,7 @@ CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 
 EOF
-echo "  [OK] daed / ddns-go / EasyTier / Samba / CIFS / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] daed / ddns-go / EasyTier / Samba4 / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 5. rootfs 分区大小
@@ -186,8 +191,7 @@ echo ""
 echo "[必需包 (缺了直接退出)]"
 for p in daed luci-app-daed ddns-go luci-app-ddns-go \
          easytier luci-app-easytier \
-         samba4-server luci-app-samba4 \
-         kmod-fs-cifs cifsmount luci-app-cifs-mount wsdd2 \
+         samba4-server luci-app-samba4 wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do
     require_pkg "$p"
@@ -196,7 +200,8 @@ done
 echo ""
 echo "[核心功能 (确保没被误删)]"
 for p in kmod-mt_wifi kmod-mediatek_hnat kmod-tun kmod-tcp-bbr \
-         kmod-usb-storage kmod-fs-ext4 block-mount ppp ppp-mod-pppoe \
+         kmod-usb-storage kmod-fs-ext4 kmod-fs-exfat kmod-fs-ntfs3 \
+         block-mount ppp ppp-mod-pppoe \
          kmod-nls-base kmod-nls-utf8 libopenssl; do
     require_pkg "$p"
 done
@@ -234,8 +239,9 @@ echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成!"
 echo "============================================================"
-echo "  新增: daed / EasyTier / ddns-go / samba4 / CIFS / wsdd2"
+echo "  新增: daed / EasyTier / ddns-go / samba4 / wsdd2"
 echo "        vnstat2 / nlbwmon / argon / ttyd"
+echo "        USB存储支持 (ext4/exFAT/NTFS3/VFAT)"
 echo "  精简: 移除 ${REMOVE_COUNT} 个包 (wrtbwmon 系列)"
 echo "  总包数: ${TOTAL_PKGS} 个"
 echo "  CPU频率: mtk-cpufreq + cpuinfo 脚本"
