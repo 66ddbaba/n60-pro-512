@@ -114,8 +114,8 @@ echo "  [OK] EasyTier / ddns-go / Samba4 / wsdd2 / vnstat2 / nlbwmon / argon / t
 # ============================================================================
 echo ""
 echo "--- 5. rootfs 分区大小 ---"
-echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=70' >> .config
-echo "  [OK] 70MB (overlay ~430MB 可用)"
+echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=50' >> .config
+echo "  [OK] 50MB (overlay ~450MB 可用)"
 
 # ============================================================================
 # 6. 第二次 defconfig (补齐依赖)
