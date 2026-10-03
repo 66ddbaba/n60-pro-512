@@ -265,24 +265,25 @@ jobs:
             - 闪存: 512MB NAND (硬改)
             - 内存: 2GB DDR4 (硬改)
             - 布局: 506.5MB UBI (移除 NMBM)
-            - rootfs: 80MB / overlay: ~420MB
+            - rootfs: 70MB / overlay: ~430MB
             - WiFi 模板: mt7975-ipailna-high-power（237高功率）
 
             ### 内置插件
-            - 代理: daed (eBPF 透明代理)
             - 组网: EasyTier (虚拟局域网)
             - DDNS: ddns-go
             - 共享: Samba4 + wsdd2 (USB存储自动共享)
             - 流量: vnstat2 + nlbwmon
             - 主题: luci-theme-argon
             - 工具: ttyd (网页终端)
+            - 代理内核支持: BPF/BTF (daed 可后续 opkg 安装)
 
             ### 系统优化
-            - BBR 拥塞控制
+            - BBR 拥塞控制 (turboacc)
             - CPU 频率显示 (mtk-cpufreq)
             - USB 存储支持 (ext4/exFAT/NTFS3/VFAT) + 自动 Samba 共享
             - IPK 软件源: 中科大镜像
             - 默认 LAN IP: 10.10.6.1
+            - 主机名: N60_Pro
 
             ### 刷入方法
             - 基于U-Bboot2025-WildEdition：`https://www.right.com.cn/forum/thread-8457733-1-1.html`
