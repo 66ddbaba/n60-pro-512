@@ -266,7 +266,7 @@ jobs:
             - 内存: 2GB DDR4 (硬改)
             - 布局: 506.5MB UBI (移除 NMBM)
             - rootfs: 80MB / overlay: ~420MB
-            - WiFi 模板: mt7975-ipailna-high-power
+            - WiFi 模板: mt7975-ipailna-high-power（237高功率）
 
             ### 内置插件
             - 代理: daed (eBPF 透明代理)
@@ -282,12 +282,6 @@ jobs:
             - CPU 频率显示 (mtk-cpufreq)
             - CIFS 自动重连
             - 默认 LAN IP: 10.10.6.1
-
-            ### 默认信息
-            - IP: `10.10.6.1`
-            - 账号: `root`
-            - 密码: 无 (首次登录请设置)
-            - ddns-go: `http://10.10.6.1:9800`
 
             ### 刷入方法
             - 基于U-Bboot2025-WildEdition：`https://www.right.com.cn/forum/thread-8457733-1-1.html`
