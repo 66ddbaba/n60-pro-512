@@ -215,17 +215,10 @@ cat > files/etc/uci-defaults/99-custom-settings << 'UCIEOF'
 #!/bin/sh
 # 首次启动执行一次, 执行后自动删除
 
-# BBR 拥塞控制
-modprobe tcp_bbr 2>/dev/null || true
-sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
-sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
-mkdir -p /etc/sysctl.d
-cat > /etc/sysctl.d/12-tcp-bbr.conf << 'BBR'
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-BBR
-BBR_NOW=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
-logger -t uci-defaults "BBR 拥塞控制: ${BBR_NOW}"
+# BBR 拥塞控制 (通过 turboacc 配置启用, 防止被 turboacc 覆盖)
+uci set turboacc.config.bbr_cca='1'
+uci commit turboacc
+logger -t uci-defaults "BBR 拥塞控制: 已通过 turboacc 启用"
 
 # IPK 软件源改为中科大镜像
 # 默认源: mirrors.vsean.net/openwrt → 中科大: mirrors.ustc.edu.cn/immortalwrt
@@ -254,10 +247,14 @@ uci set network.lan.ipaddr='10.10.6.1'
 uci set network.lan.netmask='255.255.255.0'
 uci commit network
 
+# 主机名
+uci set system.@system[0].hostname='N60_Pro'
+uci commit system
+
 exit 0
 UCIEOF
 chmod +x files/etc/uci-defaults/99-custom-settings
-echo "  [OK] uci-defaults (BBR + 中科大源 + Samba + ttyd + LAN IP)"
+echo "  [OK] uci-defaults (BBR + 主机名 + 中科大源 + Samba + ttyd + LAN IP)"
 
 # 5.4 USB 磁盘自动共享 (hotplug + samba4)
 mkdir -p files/etc/hotplug.d/block
