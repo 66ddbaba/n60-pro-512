@@ -155,15 +155,9 @@ echo ""
 echo "--- 5. 系统优化 ---"
 
 # 5.1 BBR 拥塞控制
-# modules-boot.d 确保模块在 sysctl 之前加载
-# sysctl.d 设置默认拥塞控制算法
-mkdir -p files/etc/modules-boot.d files/etc/sysctl.d
-echo "tcp_bbr" > files/etc/modules-boot.d/tcp-bbr
-cat > files/etc/sysctl.d/12-tcp-bbr.conf << 'EOF'
-net.core.default_qdisc = fq
-net.ipv4.tcp_congestion_control = bbr
-EOF
-echo "  [OK] BBR 拥塞控制"
+# 全部通过 uci-defaults 实现: 加载模块 + 设置sysctl + 写配置文件(持久化)
+# 不使用 modules-boot.d / sysctl.d 文件方式, 避免时序问题
+echo "  [OK] BBR 拥塞控制 (通过 uci-defaults 设置)"
 
 # 5.2 CPU 频率显示 (mtk-cpufreq + cpuinfo)
 mkdir -p files/usr/bin files/sbin
@@ -221,6 +215,25 @@ cat > files/etc/uci-defaults/99-custom-settings << 'UCIEOF'
 #!/bin/sh
 # 首次启动执行一次, 执行后自动删除
 
+# BBR 拥塞控制
+modprobe tcp_bbr 2>/dev/null || true
+sysctl -w net.core.default_qdisc=fq >/dev/null 2>&1
+sysctl -w net.ipv4.tcp_congestion_control=bbr >/dev/null 2>&1
+mkdir -p /etc/sysctl.d
+cat > /etc/sysctl.d/12-tcp-bbr.conf << 'BBR'
+net.core.default_qdisc = fq
+net.ipv4.tcp_congestion_control = bbr
+BBR
+BBR_NOW=$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)
+logger -t uci-defaults "BBR 拥塞控制: ${BBR_NOW}"
+
+# IPK 软件源改为中科大镜像
+# 默认源: mirrors.vsean.net/openwrt → 中科大: mirrors.ustc.edu.cn/immortalwrt
+if [ -f /etc/opkg/distfeeds.conf ]; then
+    sed -i 's|mirrors.vsean.net/openwrt|mirrors.ustc.edu.cn/immortalwrt|g' /etc/opkg/distfeeds.conf
+    logger -t uci-defaults "IPK 软件源已切换为中科大镜像"
+fi
+
 # Samba4: 多通道 + 访客访问
 if uci get samba4.@samba4[0] >/dev/null 2>&1; then
     uci set samba4.@samba4[0].enable_multichannel='1'
@@ -244,7 +257,7 @@ uci commit network
 exit 0
 UCIEOF
 chmod +x files/etc/uci-defaults/99-custom-settings
-echo "  [OK] uci-defaults (Samba + ttyd + LAN IP)"
+echo "  [OK] uci-defaults (BBR + 中科大源 + Samba + ttyd + LAN IP)"
 
 # 5.4 USB 磁盘自动共享 (hotplug + samba4)
 mkdir -p files/etc/hotplug.d/block
@@ -343,6 +356,6 @@ echo "  DIY Part 1 完成!"
 echo "============================================================"
 echo "  DTS: 内存 2GB / 无 NMBM / UBI 506.5MB"
 echo "  第三方包: luci-app-easytier"
-echo "  系统优化: BBR + CPU频率 + uci-defaults"
+echo "  系统优化: BBR(uci-defaults) + CPU频率 + 中科大软件源"
 echo "  USB存储: 自动挂载 + 自动Samba共享 + ext4/exFAT/NTFS3/VFAT"
 echo "============================================================"
