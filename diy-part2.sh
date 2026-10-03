@@ -217,7 +217,95 @@ make defconfig
 echo "  [OK] 第二次 defconfig 完成"
 
 # ============================================================================
-# 7. 输出包列表 (供后续精简分析用)
+# 7. 精简固件 (保守方案)
+# ============================================================================
+# 【为什么在第二次 defconfig 之后才精简?】
+# make defconfig 会自动补齐所有依赖。如果先删再 defconfig,
+# 某些包可能作为依赖被重新 =y, 白删了。
+# 在 defconfig 之后删, 确保我们明确要删的不会被带回来。
+#
+# 【保守原则】
+#   1. 只删确定用不到的, 不碰任何可能影响核心功能的
+#   2. MTK WiFi / 硬件加速 / 默认配置 相关的一个都不动
+#   3. 拿不准的一律留着, 省那点空间不值得冒险
+# ============================================================================
+
+# remove_pkg: 取消一个包 (=y → is not set)
+REMOVE_COUNT=0
+remove_pkg() {
+    if grep -q "^CONFIG_PACKAGE_${1}=y" .config 2>/dev/null; then
+        sed -i "s/^CONFIG_PACKAGE_${1}=y/# CONFIG_PACKAGE_${1} is not set/" .config
+        REMOVE_COUNT=$((REMOVE_COUNT + 1))
+    fi
+    return 0
+}
+
+echo ""
+echo "--- 7. 精简固件 (保守方案) ---"
+
+# ---- A. 被新插件替代的 ----
+# wrtbwmon → vnstat2 + nlbwmon (功能更强, 更准)
+for pkg in luci-app-wrtbwmon wrtbwmon luci-i18n-wrtbwmon-zh-cn; do
+    remove_pkg "$pkg"
+done
+echo "  [A] 被替代: wrtbwmon (+中文翻译)"
+
+# ---- B. 调试工具 (普通用户用不到, 需要时 opkg 装) ----
+# htop → busybox 的 top 够用
+# regs / mii_mgr → 寄存器/MII 调试, 普通用户不用
+# fdisk → 分区工具 (block-mount / parted 够用)
+#
+# 【保留的】
+#   nano: 你说留着
+#   tcpdump + libpcap: 你说留着
+#   ethtool: 你说留着
+for pkg in htop regs mii_mgr fdisk; do
+    remove_pkg "$pkg"
+done
+echo "  [B] 调试工具 (htop/regs/mii_mgr/fdisk)"
+
+# ---- C. N60 Pro 硬件没有的 ----
+# kmod-ata-core: SATA 驱动 (N60 Pro 没有 SATA 接口)
+# kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
+# kmod-fs-btrfs: Btrfs 文件系统 (用 squashfs + ext4, 不需要 btrfs)
+for pkg in kmod-ata-core kmod-leds-ws2812b kmod-fs-btrfs; do
+    remove_pkg "$pkg"
+done
+echo "  [C] 硬件无关 (ata-core/ws2812b/btrfs)"
+
+# ---- E. zram 内存压缩 (2GB 内存不需要) ----
+# zram-swap: 用户态脚本
+# kmod-zram: 内核模块
+# kmod-lib-lzo: LZO 压缩库
+for pkg in zram-swap kmod-zram kmod-lib-lzo; do
+    remove_pkg "$pkg"
+done
+echo "  [E] zram 内存压缩 (2GB 不需要)"
+
+# ---- F. 其他明确用不上的 ----
+# openssh-keygen / openssh-sftp-server: SSH 工具 (dropbear 完全够用)
+# libfido2 / libcbor: FIDO 安全密钥 (路由器不需要)
+# resolveip: DNS 解析工具 (busybox nslookup 够用)
+#
+# 【保留的】
+#   haveged: 你说留着
+#   usbutils + usbids + libevdev: 你说留着 (lsusb 等 USB 诊断工具)
+for pkg in openssh-keygen openssh-sftp-server \
+           libfido2 libcbor \
+           resolveip; do
+    remove_pkg "$pkg"
+done
+echo "  [F] 其他 (openssh/fido2/resolveip)"
+
+# ---- G. 重复主题 ----
+# luci-theme-bootstrap: 默认主题 (我们用 argon, 这个留着也占不了多少空间, 但确实用不上)
+remove_pkg "luci-theme-bootstrap"
+echo "  [G] 重复主题: bootstrap (用 argon 替代)"
+
+echo "  合计移除: ${REMOVE_COUNT} 个包"
+
+# ============================================================================
+# 8. 输出包列表 (供后续精简分析用)
 # ============================================================================
 # 把所有 =y 的 CONFIG_PACKAGE_* 都列出来, 保存到 package-list.txt。
 # 后续精简时可以对照这个列表, 知道模板 + 新增 + 依赖总共有哪些包。
@@ -225,7 +313,7 @@ echo "  [OK] 第二次 defconfig 完成"
 # 输出格式: 纯包名, 每行一个, 方便后续 grep / diff 分析。
 # ============================================================================
 echo ""
-echo "--- 7. 输出包列表 (用于精简分析) ---"
+echo "--- 8. 输出包列表 (用于精简分析) ---"
 
 PKG_LIST="package-list.txt"
 
@@ -250,7 +338,7 @@ echo "  内核模块: $(grep -c '^kmod-' "$PKG_LIST") 个"
 echo "  其他包:   $(grep -cv -e '^luci-' -e '^kmod-' "$PKG_LIST") 个"
 
 # ============================================================================
-# 8. 验证 (关键包缺失直接退出, 不白编译)
+# 9. 验证 (关键包缺失直接退出, 不白编译)
 # ============================================================================
 # 【为什么要验证?】
 # 编译一次要 2-3 小时, 如果关键包没选上, 白等半天。
@@ -305,11 +393,28 @@ if [ "$MISSING" -gt 0 ]; then
 fi
 
 echo ""
-echo "[分区大小]"
-grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config
+echo "  [全部通过] 关键包验证完成"
+
+# 精简包只做信息展示, 不强制退出 (本来就没有的也算正常)
+check_removed() {
+    if grep -q "CONFIG_PACKAGE_${1} is not set" .config 2>/dev/null; then
+        echo "  [OK] ${1}: 已移除"
+    else
+        echo "  [--] ${1}: 不在配置中 (默认就没有)"
+    fi
+}
 
 echo ""
-echo "  [全部通过] 关键包验证完成"
+echo "[精简的包 (信息展示)]"
+for p in luci-app-wrtbwmon htop zram-swap \
+         kmod-ata-core kmod-leds-ws2812b \
+         openssh-keygen libfido2 luci-theme-bootstrap; do
+    check_removed "$p"
+done
+
+echo ""
+echo "[分区大小]"
+grep "CONFIG_TARGET_ROOTFS_PARTSIZE" .config
 
 # ============================================================================
 # 完成
@@ -322,8 +427,8 @@ echo "  新增: daed / EasyTier / ddns-go"
 echo "        samba4 / CIFS挂载 / wsdd2"
 echo "        vnstat2 / nlbwmon"
 echo "        argon / ttyd"
+echo "  精简: 移除 ${REMOVE_COUNT} 个包 (保守方案)"
 echo "  总包数: ${TOTAL_PKGS} 个 (详见 package-list.txt)"
 echo "  CPU频率: mtk-cpufreq + cpuinfo 脚本 (不靠 autocore 包)"
 echo "  rootfs: 80MB (overlay ~420MB)"
-echo "  策略: 只加不减, 先跑通再精简"
 echo "============================================================"
