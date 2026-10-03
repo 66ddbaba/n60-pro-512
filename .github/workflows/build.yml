@@ -288,6 +288,12 @@ jobs:
             - 账号: `root`
             - 密码: 无 (首次登录请设置)
             - ddns-go: `http://10.10.6.1:9800`
+
+            ### 刷入方法
+            - 基于U-Bboot2025-WildEdition：`https://www.right.com.cn/forum/thread-8457733-1-1.html`
+            - 路由器断电 → 按住重置或Mesh键 → 通电 → 电源LED快闪4次慢闪2次 → 松手
+            - 浏览器访问: `http://10.10.10.1`
+            - 选 506.5MB 分区表, 上传 sysupgrade.bin
           files: /tmp/firmware/*.bin
           draft: false
           prerelease: false
