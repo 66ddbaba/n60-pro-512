@@ -267,11 +267,13 @@ echo "  [B] 调试工具 (htop/regs/mii_mgr/fdisk)"
 # ---- C. N60 Pro 硬件没有的 ----
 # kmod-ata-core: SATA 驱动 (N60 Pro 没有 SATA 接口)
 # kmod-leds-ws2812b: WS2812B 彩灯驱动 (N60 Pro 没有)
-# kmod-fs-btrfs: Btrfs 文件系统 (用 squashfs + ext4, 不需要 btrfs)
-for pkg in kmod-ata-core kmod-leds-ws2812b kmod-fs-btrfs; do
+#
+# 【保留的】
+#   kmod-fs-btrfs: 虽然 N60 Pro 不用 Btrfs, 但 luci-app-turboacc-mtk 依赖它, 不能删
+for pkg in kmod-ata-core kmod-leds-ws2812b; do
     remove_pkg "$pkg"
 done
-echo "  [C] 硬件无关 (ata-core/ws2812b/btrfs)"
+echo "  [C] 硬件无关 (ata-core/ws2812b)"
 
 # ---- E. zram 内存压缩 (2GB 内存不需要) ----
 # zram-swap: 用户态脚本
@@ -298,9 +300,10 @@ done
 echo "  [F] 其他 (openssh/fido2/resolveip)"
 
 # ---- G. 重复主题 ----
-# luci-theme-bootstrap: 默认主题 (我们用 argon, 这个留着也占不了多少空间, 但确实用不上)
-remove_pkg "luci-theme-bootstrap"
-echo "  [G] 重复主题: bootstrap (用 argon 替代)"
+# 【注意】luci-theme-bootstrap 不能删!
+# default-settings → luci-light → luci-theme-bootstrap, 删了默认配置包装不上, 直接编译失败。
+# 虽然我们用 argon, 但 bootstrap 得留着当依赖。
+echo "  [G] 重复主题: 保留 bootstrap (default-settings 依赖, 不能删)"
 
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
@@ -408,7 +411,7 @@ echo ""
 echo "[精简的包 (信息展示)]"
 for p in luci-app-wrtbwmon htop zram-swap \
          kmod-ata-core kmod-leds-ws2812b \
-         openssh-keygen libfido2 luci-theme-bootstrap; do
+         openssh-keygen libfido2; do
     check_removed "$p"
 done
 
