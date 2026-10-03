@@ -1,46 +1,19 @@
 # ============================================================================
 #  ImmortalWrt GitHub Actions 云编译工作流
-#
-#  【这是什么】
-#  GitHub Actions 是 GitHub 提供的自动化构建服务。
-#  这个工作流定义了"怎么编译固件"的完整流程, 每次手动触发就会:
-#    1. 启动一台 Ubuntu 虚拟机
-#    2. 安装编译依赖
-#    3. 下载 ImmortalWrt 源码
-#    4. 执行 diy 脚本 (修改源码 + 选包)
-#    5. 编译固件
-#    6. 发布到 GitHub Releases
-#
-#  【设备信息】
-#    路由器: 磊科 N60 Pro (硬改版)
-#    闪存:   512MB NAND (原 128MB)
-#    内存:   2GB DDR4 (原 512MB)
-#    布局:   506.5MB UBI (移除 NMBM)
-#    源码:   padavanonly/immortalwrt-mt798x-6.6
-#    模板:   mt7975-ipailna-high-power
-#
-#  【触发方式】
-#    workflow_dispatch: 纯手动触发 (Actions 页面点 Run workflow)
-#    为什么不用自动触发? 避免每次改文件就触发编译 (编译要 2-3 小时)
-#
-#  【输出位置】
-#    - GitHub Releases: 正式发布 (保留最近 3 个)
-#    - Artifacts: 临时备份 (保留 7 天)
+#  设备: 磊科 N60 Pro 硬改版 (512MB NAND / 2GB DDR4 / 506.5MB UBI)
+#  触发: 手动 (Actions → Run workflow)
 # ============================================================================
 
 name: Build N60 Pro 512M Firmware
 
-# 触发条件: 仅手动触发
 on:
   workflow_dispatch:
 
-# 环境变量 (全局可用)
 env:
   REPO_URL: https://github.com/padavanonly/immortalwrt-mt798x-6.6
   REPO_BRANCH: openwrt-24.10-6.6
   TZ: Asia/Shanghai
 
-# 权限: 需要写仓库内容 (用于创建 Release)
 permissions:
   contents: write
 
@@ -48,97 +21,51 @@ jobs:
   build:
     name: Compile Firmware
     runs-on: ubuntu-latest
-    timeout-minutes: 360  # 超时时间 6 小时 (编译一般 2-3 小时, 留余量)
+    timeout-minutes: 360
 
     steps:
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 1: 检出本仓库
-      # ============================================================
-      # 【作用】
-      # 把当前 GitHub 仓库的代码拉到虚拟机里。
-      # 我们的 diy-part1.sh / diy-part2.sh / mtk-cpufreq 都在这个仓库里。
-      #
-      # 【$GITHUB_WORKSPACE】
-      # GitHub Actions 的环境变量, 指向当前仓库的根目录。
-      # 后面的脚本里经常用这个变量引用本仓库的文件。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Checkout
         uses: actions/checkout@v5
 
-      # ============================================================
-      # Step 2: 释放磁盘空间 (只做高性价比清理)
-      # ============================================================
-      # 【为什么要清理?】
-      # GitHub 免费 runner 只有约 14GB 可用空间, 编译 OpenWrt 需要 ~15-20GB。
-      # 删掉系统自带但我们不需要的大块头, 腾出 ~10GB+ 就够了。
-      #
-      # 【清理策略】
-      # 只做"秒级删几 GB"的高性价比操作, 跳过"花几分钟省几百 MB"的低性价比操作。
-      # 比如 apt-get remove 卸编译器要 1-2 分钟才省 300MB, 直接跳过。
-      #
-      # 【空间需求参考】
-      #   源码: ~0.5GB / dl下载: ~3-5GB / 工具链: ~3-5GB
-      #   编译中间文件: ~8-12GB / 输出: ~0.2GB
-      #   合计: ~15-20GB
-      # ============================================================
+      # ------------------------------------------------------------
+      # Step 2: 释放磁盘空间
+      # ------------------------------------------------------------
       - name: Free disk space
         run: |
           echo "=== 清理前 ===" && df -h /
           START=$(date +%s)
 
-          # ---- 大块头 SDK/运行时 (秒级删几 GB, 性价比最高) ----
-          sudo rm -rf /usr/local/lib/android    # Android SDK: ~5GB
-          sudo rm -rf /usr/share/dotnet          # .NET: ~3GB
-          sudo rm -rf /usr/share/swift           # Swift: ~2.5GB
-          sudo rm -rf /opt/ghc                   # Haskell: ~1.5GB
-          sudo rm -rf /opt/az /opt/microsoft/powershell  # Azure + PowerShell: ~1GB
-          sudo rm -rf /usr/local/share/boost     # Boost C++ 库: ~500MB
+          # 大块头 SDK/运行时
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/share/swift
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/az /opt/microsoft/powershell
+          sudo rm -rf /usr/local/share/boost
 
-          # ---- hostedtoolcache 里的语言运行时 (秒级, ~2-3GB) ----
-          # 编译 OpenWrt 用自己的工具链, 不需要系统的 Go/Ruby/PyPy...
+          # hostedtoolcache 里的语言运行时
           sudo rm -rf /opt/hostedtoolcache/{go,Ruby,PyPy,CodeQL,julia,Kotlin}
-          # Python 只留 3.x (删其他版本)
           sudo find /opt/hostedtoolcache/Python -mindepth 1 -maxdepth 1 ! -name "3.*" -exec rm -rf {} + 2>/dev/null || true
 
-          # ---- Docker 镜像 (中等, ~1-2GB, 但比 apt 快) ----
+          # Docker 镜像
           docker system prune -af --volumes 2>/dev/null || true
 
-          # ---- apt 缓存 (秒级, ~200MB) ----
+          # apt 缓存 + 临时文件
           sudo apt-get clean
-          sudo rm -rf /var/cache/apt/*
+          sudo rm -rf /var/cache/apt/* /tmp/* /var/log/*
 
-          # ---- 临时文件 + 日志 (秒级, ~几十 MB) ----
-          sudo rm -rf /tmp/* /var/log/*
-
-          # ---- Node/NVM/Snap (秒级, ~几百 MB) ----
+          # Node/NVM/Snap
           sudo rm -rf /usr/local/share/npm /usr/local/share/nvm /snap 2>/dev/null || true
 
           END=$(date +%s)
           echo "=== 清理完成 (耗时 $((END - START)) 秒) ===" && df -h /
 
-      # ============================================================
-      # Step 3: 安装编译依赖 (保守精简版)
-      # ============================================================
-      # 【精简原则】
-      #  保守方案: 只移除 100% 确定用不到的包, 宁留勿删。
-      #  不确定的一律保留, 避免编译到一半报 "xxx not found"。
-      #
-      # 【移除的包 (约20个, 都是绝对不需要的)】
-      #   - 编辑器: nano / vim → 编译不需要编辑器
-      #   - 文档工具: asciidoc / help2man / texinfo / xmlto / python3-docutils
-      #   - Java工具: ecj / fastjar → OpenWrt 不用 Java
-      #   - 32位兼容: gcc-multilib / g++-multilib / lib32gcc-s1 / libc6-dev-i386
-      #   - 邮件/串口: msmtp / lrzsz
-      #   - 杂项: ack(搜索) / haveged(随机数) / mkisofs(ISO)
-      #           / qemu-utils(虚拟化) / swig(绑定生成)
-      #           / p7zip / upx-ucl / uglifyjs (小众压缩工具)
-      #
-      # 【保留的关键包】
-      #   - 编译器: gcc / g++ / clang / llvm (daed BPF 需要)
-      #   - 构建: make / cmake / ninja / autoconf / automake / scons
-      #   - 工具: git / curl / wget / rsync / patch / python3
-      #   - 库: openssl / elfutils / gmp / mpfr / mpc / zlib
-      # ============================================================
+      # ------------------------------------------------------------
+      # Step 3: 安装编译依赖
+      # ------------------------------------------------------------
       - name: Install dependencies
         env:
           DEBIAN_FRONTEND: noninteractive
@@ -154,105 +81,47 @@ jobs:
             re2c rsync scons subversion swig unzip wget zlib1g-dev zstd
           echo "=== 依赖安装完成 ==="
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 4: 克隆固件源码
-      # ============================================================
-      # 【参数说明】
-      #   --depth 1: 只克隆最新一次提交, 不下载完整历史 (省时间省空间)
-      #   --single-branch: 只克隆指定分支
-      #   -b $REPO_BRANCH: 指定分支 (openwrt-24.10-6.6)
-      #
-      # 【为什么删 .git?】
-      # .git 目录存了所有历史记录, 占空间还没用。
-      # 编译不需要版本控制信息, 删掉能省几百 MB。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Clone source
         run: |
           git clone --depth 1 --single-branch -b ${{ env.REPO_BRANCH }} ${{ env.REPO_URL }} openwrt
           cd openwrt
-          # 显示一下最新提交, 方便知道编译的是哪个版本
           git log -1 --format="提交: %H%n作者: %an%n日期: %ad%n信息: %s"
           rm -rf .git
           echo "=== 删除 .git 后 ===" && df -h /
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 5: DIY Part 1 - 修改源码
-      # ============================================================
-      # 【时机】
-      #   clone 源码之后, feeds update 之前
-      #
-      # 【做什么】
-      #   - 修改 DTS (内存 2GB / 闪存 506.5MB / 移除 NMBM)
-      #   - 确保设备定义存在
-      #   - 克隆第三方软件包 (EasyTier 界面)
-      #   - 配置 BBR / cpuinfo / uci-defaults / CIFS 自动重连
-      #
-      # 【为什么在 feeds update 之前?】
-      #   我们克隆的第三方包要放进 package/ 目录,
-      #   feeds update 时会扫描到它们并纳入编译系统。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Run DIY Part 1
         run: |
           cd openwrt
           bash $GITHUB_WORKSPACE/diy-part1.sh
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 6: 更新和安装 feeds
-      # ============================================================
-      # 【feeds 是什么?】
-      # feeds 是 OpenWrt 的软件包源, 类似 Linux 的 apt / yum。
-      # feeds.conf 里配置了 feeds 的地址, 常见的有:
-      #   - packages: 基础软件包
-      #   - luci: LuCI 界面相关
-      #   - routing: 路由相关 (bird / openvpn 等)
-      #   - telephony: 电话相关
-      #
-      # 【两个命令的区别】
-      #   ./scripts/feeds update -a  → 更新所有 feeds 的元数据 (下载包列表)
-      #   ./scripts/feeds install -a → 安装所有 feeds 里的包 (软链接到 package/feeds/)
-      #
-      # 【为什么删 feeds 的 .git?】
-      # 每个 feed 都是一个 git 仓库, 加起来 .git 很大。
-      # 编译不需要这些, 删掉省空间。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Update & install feeds
         run: |
           cd openwrt
           ./scripts/feeds update -a
           ./scripts/feeds install -a
-          # 删除所有 feeds 的 .git 目录省空间
           find feeds -name ".git" -type d -exec rm -rf {} + 2>/dev/null || true
           echo "=== 清理 feeds 后 ===" && df -h /
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 7: DIY Part 2 - 生成 .config
-      # ============================================================
-      # 【时机】
-      #   feeds install 之后, make download 之前
-      #
-      # 【做什么】
-      #   - 加载高功率模板
-      #   - 禁用其他设备 (只编 N60 Pro)
-      #   - 精简固件 (移除不必要的包)
-      #   - 配置 daed eBPF 内核选项
-      #   - 选择软件包
-      #   - 设置 rootfs 分区大小
-      #   - make defconfig (补齐依赖)
-      #   - 验证关键配置
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Run DIY Part 2
         run: |
           cd openwrt
           bash $GITHUB_WORKSPACE/diy-part2.sh
 
-      # ============================================================
-      # Step 7.5: 上传包列表 (供精简分析)
-      # ============================================================
-      # 【为什么要上传?】
-      # diy-part2.sh 会生成 package-list.txt (所有选中的包, 每行一个)。
-      # 即使编译失败, 我们也能拿到这个列表, 分析哪些包可以精简。
-      # 同时也上传 .config, 方便排查配置问题。
-      # ============================================================
+      # ------------------------------------------------------------
+      # Step 7.5: 上传包列表
+      # ------------------------------------------------------------
       - name: Upload package list
         if: always()
         uses: actions/upload-artifact@v6
@@ -264,61 +133,25 @@ jobs:
           retention-days: 14
           if-no-files-found: warn
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 8: 下载源码包
-      # ============================================================
-      # 【这一步做什么】
-      # make download 会下载所有选中的软件包的源码到 dl/ 目录。
-      # 为什么要单独一步? 因为下载是网络 IO, 和编译的 CPU IO 分开更清晰,
-      # 而且下载失败可以单独重试。
-      #
-      # 【为什么要删大 tar 包?】
-      # 有些源码包很大 (比如 Linux 内核、GCC), 编译后就不需要了。
-      # 但注意: 编译过程中可能还需要解压某些包, 所以这里只删特别大的 (+5M)。
-      # 实际上编译系统会按需重新下载, 所以删了也没事...
-      # 等等, 不对! 编译需要源码包, 不能删。
-      # 正确做法是: 编译完了再清理 dl/。
-      # 这里先保留, 编译阶段需要用。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Download sources
         run: |
           cd openwrt
           make download -j$(nproc) V=w 2>&1 | tail -20
           echo "=== 下载完成 ===" && df -h /
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 9: 编译固件 (失败时自动诊断)
-      # ============================================================
-      # 【编译命令】
-      #   make -j$(nproc) V=w
-      #   -j$(nproc): 用所有 CPU 核心并行编译 (加快速度)
-      #   V=w: 显示警告信息 (w = warnings)
-      #
-      # 【失败自动诊断】
-      # 编译失败是家常便饭, 光看最后几行日志往往找不到原因。
-      # 失败时自动做三件事:
-      #   1. 搜索错误关键词 (error / undefined reference / missing 等)
-      #   2. 检查磁盘空间 (是不是空间不够了)
-      #   3. 单线程重编 (V=s 显示详细输出, 更容易定位错误)
-      #
-      # 【为什么单线程重编?】
-      #   多线程编译时, 错误信息会和其他输出混在一起, 很难找。
-      #   单线程 + V=s (verbose) 会按顺序输出, 错误一目了然。
-      #   判断是内核阶段还是包阶段失败, 分别重编对应的部分。
-      #
-      # 【PIPESTATUS】
-      #   make ... | tee ... | tail ...
-      #   管道里最后一个命令的退出码是 tail 的, 不是 make 的。
-      #   PIPESTATUS[0] 才是 make 的退出码。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Build firmware
         id: Build
         run: |
           cd openwrt
           echo "=== 开始编译 ==="
-          set +e  # 临时关闭错误退出, 我们自己处理
+          set +e
 
-          # 多线程编译, 日志存文件, 只显示最后 300 行
           make -j$(nproc) V=w 2>&1 | tee /tmp/build.log | tail -300
           BUILD_EXIT=${PIPESTATUS[0]}
           echo "退出码: ${BUILD_EXIT}"
@@ -327,7 +160,7 @@ jobs:
             echo ""
             echo "=== 编译失败! 诊断中 ==="
 
-            # 1. 搜索各种错误关键词
+            # 搜索错误关键词
             for kw in "error:" "make\[.*Error" "Package.*missing" "No rule to make" \
                      "cannot find" "undefined reference" "fatal:" "No space left"; do
               count=$(grep -ic "$kw" /tmp/build.log 2>/dev/null || echo 0)
@@ -337,11 +170,10 @@ jobs:
               fi
             done
 
-            # 2. 检查磁盘空间
+            # 检查磁盘空间
             echo "=== 磁盘空间 ===" && df -h /
 
-            # 3. 单线程重编 (详细输出)
-            #    判断失败在哪个阶段, 重编对应部分节省时间
+            # 单线程重编
             if grep -q "target/linux" /tmp/build.log; then
               echo "=== 单线程重编内核 ==="
               make -j1 V=s target/linux/compile 2>&1 | tee /tmp/build-kernel.log | tail -400
@@ -355,37 +187,12 @@ jobs:
             exit ${BUILD_EXIT}
           fi
 
-          # 编译成功, 显示输出的固件
           echo "=== 编译成功 ==="
           find bin/ -name "*n60*" -type f 2>/dev/null | xargs ls -lh 2>/dev/null || echo "未找到"
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 10: 提取版本号 + 重命名固件
-      # ============================================================
-      # 【为什么要提取版本号?】
-      # 固件文件名里包含版本号, 比如 immortalwrt-24.10.5-...
-      # 我们需要这个版本号来:
-      #   - 命名 Release 的 tag
-      #   - 重命名固件文件 (更清晰)
-      #
-      # 【为什么有 3 种方法?】
-      # 不同版本的 ImmortalWrt, 版本号存放的位置和格式不一样。
-      # 写死某一种方法容易失效, 所以用多种方法尝试, 哪个成功用哪个:
-      #   方法1: 用 make 展开 version.mk (最准确)
-      #   方法2: 从编译好的固件文件名里提取 (最直接)
-      #   方法3: 默认值兜底 (保证不会因为版本号失败)
-      #
-      # 【版本号校验】
-      # 用正则表达式验证版本号格式是否合法,
-      # 避免提取到奇怪的字符串导致后面出错。
-      #
-      # 【为什么只保留 sysupgrade.bin?】
-      # 编译会输出多个文件:
-      #   - initramfs-kernel.bin: 内存版固件 (tftp 救砖用, 普通用户不需要)
-      #   - factory.bin: 原厂固件直刷版 (breed/uboot 直刷, 一般用不到)
-      #   - squashfs-sysupgrade.bin: 系统升级用 (最常用, 日常刷机都用这个)
-      # 只保留 sysupgrade.bin 减少 Release 体积。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Rename firmware
         if: success()
         run: |
@@ -395,14 +202,11 @@ jobs:
 
           echo "=== 提取版本号 ==="
 
-          # 版本号格式校验函数
-          # 合法格式: 数字.数字 或 数字.数字.数字, 可带 -SNAPSHOT 等后缀
           is_valid_version() {
               echo "$1" | grep -qE '^[0-9]+\.[0-9]+(\.[0-9]+)?(-[A-Za-z0-9]+)?$'
           }
 
-          # 方法1: 用 make 展开 version.mk (最准确)
-          # 直接 include version.mk 然后输出 VERSION_NUMBER 变量
+          # 方法1: make 展开 version.mk
           v=$(make -s --no-print-directory --eval='include include/version.mk' --eval='v:;@echo $(VERSION_NUMBER)' v 2>/dev/null | tr -d '[:space:][:cntrl:]')
           if is_valid_version "$v"; then VERSION="$v"; echo "  方法1 (make): $VERSION"; fi
 
@@ -415,7 +219,7 @@ jobs:
             fi
           fi
 
-          # 方法3: 默认值 (兜底)
+          # 方法3: 默认值兜底
           if ! is_valid_version "$VERSION"; then
             VERSION="24.10-SNAPSHOT"
             echo "  方法3 (默认): $VERSION"
@@ -426,12 +230,11 @@ jobs:
           TAG="v${VERSION}-${DATE}"
           echo "Tag: ${TAG}"
 
-          # 存到环境变量, 后面的步骤可以用
           echo "RELEASE_VERSION=${VERSION}" >> $GITHUB_ENV
           echo "RELEASE_DATE=${DATE}" >> $GITHUB_ENV
           echo "RELEASE_TAG=${TAG}" >> $GITHUB_ENV
 
-          # 复制 sysupgrade.bin 并重命名 (放到 /tmp/firmware/)
+          # 只保留 sysupgrade.bin
           mkdir -p /tmp/firmware
           SYSUPGRADE=$(find "$FW_DIR" -name "*n60*squashfs-sysupgrade.bin" -type f 2>/dev/null | head -1)
 
@@ -446,25 +249,9 @@ jobs:
           echo "=== 固件文件 ==="
           ls -lh /tmp/firmware/
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 11: 发布到 GitHub Releases
-      # ============================================================
-      # 【用什么 Action?】
-      # softprops/action-gh-release 是最常用的 Release Action。
-      # v3 版本支持最新的 GitHub API。
-      #
-      # 【发布内容】
-      #   - tag_name: 版本标签 (比如 v24.10.5-20260920)
-      #   - name: Release 标题
-      #   - body: Release 说明 (Markdown 格式)
-      #   - files: 要上传的文件
-      #   - draft: 是否草稿 (false = 直接发布)
-      #   - prerelease: 是否预发布 (false = 正式发布)
-      #
-      # 【if 条件】
-      #   if: success() && steps.Build.outcome == 'success'
-      #   只有前面所有步骤都成功, 并且编译步骤也成功, 才发布 Release。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Create Release
         if: success() && steps.Build.outcome == 'success'
         uses: softprops/action-gh-release@v3
@@ -472,62 +259,42 @@ jobs:
           tag_name: ${{ env.RELEASE_TAG }}
           name: ImmortalWrt ${{ env.RELEASE_VERSION }} (${{ env.RELEASE_DATE }}) - N60 Pro 506.5MB
           body: |
-            ## ImmortalWrt 固件 - 磊科 N60 Pro
+            ## ImmortalWrt 固件 - 磊科 N60 Pro 512M
 
             ### 硬件配置
             - 闪存: 512MB NAND (硬改)
             - 内存: 2GB DDR4 (硬改)
             - 布局: 506.5MB UBI (移除 NMBM)
-            - rootfs: 80MB / rootfs_data: ~420MB
+            - rootfs: 80MB / overlay: ~420MB
             - WiFi 模板: mt7975-ipailna-high-power
 
             ### 内置插件
-            - 代理: daed (eBPF 高性能透明代理)
+            - 代理: daed (eBPF 透明代理)
             - 组网: EasyTier (虚拟局域网)
-            - DDNS: ddns-go (动态域名, 含 LuCI 管理界面)
-            - 共享: Samba4 服务端 + CIFS 客户端挂载 (cifsmount + LuCI界面) + wsdd2
-            - 流量: vnstat2 (WAN统计) + nlbwmon (设备统计)
+            - DDNS: ddns-go
+            - 共享: Samba4 + CIFS 挂载 + wsdd2
+            - 流量: vnstat2 + nlbwmon
             - 主题: luci-theme-argon
-            - 工具: ttyd (网页终端, LAN免登录)
+            - 工具: ttyd (网页终端)
 
             ### 系统优化
-            - BBR 拥塞控制 (替代默认 CUBIC)
+            - BBR 拥塞控制
             - CPU 频率显示 (mtk-cpufreq)
-            - CIFS 自动重连 (断线后自动恢复挂载)
+            - CIFS 自动重连
             - 默认 LAN IP: 10.10.6.1
 
-            ### 精简内容
-            - 移除 wrtbwmon (替代为 vnstat2 + nlbwmon)
-            - 移除调试工具 (htop/tcpdump/nano/regs 等, 需要时 opkg 装)
-            - 移除 IPv6 用户态工具 (内核保留)
-            - 移除 zram / 无用硬件驱动 (SATA/WS2812B 等)
-
-            ### 刷入方法 (U-Boot 2025 WildEdition)
-            1. 断电 → 按住重置或 Mesh 键 → 通电
-            2. 电源 LED 快闪 4 次慢闪 2 次后松手
-            3. 电脑设 IP 10.10.10.x, 浏览器访问 http://10.10.10.1
-            4. 选 506.5MB 分区表, 上传 sysupgrade.bin 刷入
+            ### 默认信息
+            - IP: `10.10.6.1`
+            - 账号: `root`
+            - 密码: 无 (首次登录请设置)
+            - ddns-go: `http://10.10.6.1:9800`
           files: /tmp/firmware/*.bin
           draft: false
           prerelease: false
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 12: 清理旧 Release (保留最近 3 个)
-      # ============================================================
-      # 【为什么要清理?】
-      # 每次编译都产生一个 Release, 时间长了 Release 列表会很长。
-      # 保留最近 3 个足够用了, 旧的自动删掉。
-      #
-      # 【怎么实现?】
-      # 用 gh 命令行工具:
-      #   gh release list → 列出所有 release
-      #   --json tagName,createdAt → 输出 JSON 格式
-      #   jq 排序取第 3 个以后的 → 就是要删的
-      #   gh release delete → 删除
-      #
-      # 【GH_TOKEN】
-      # GitHub 自动提供的 token, 有权限操作当前仓库。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Cleanup old releases
         if: success()
         run: |
@@ -540,24 +307,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 13: 失败时上传日志
-      # ============================================================
-      # 【作用】
-      # 编译失败时, 把日志文件上传为 Artifact, 方便下载分析。
-      #
-      # 【if: failure()】
-      # 只有前面有步骤失败时才执行。
-      #
-      # 【上传哪些文件】
-      #   - /tmp/build.log: 多线程编译日志
-      #   - /tmp/build-kernel.log: 单线程内核编译日志 (如果内核阶段失败)
-      #   - /tmp/build-pkg.log: 单线程包编译日志 (如果包阶段失败)
-      #   - openwrt/.config: 配置文件 (确认配置是否正确)
-      #
-      # 【retention-days: 7】
-      # 保留 7 天, 够分析问题了, 7 天后自动删除省空间。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Upload logs (on failure)
         if: failure()
         uses: actions/upload-artifact@v6
@@ -571,19 +323,9 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      # ============================================================
+      # ------------------------------------------------------------
       # Step 14: 成功时上传固件到 Artifacts (备份)
-      # ============================================================
-      # 【为什么要上传 Artifacts?】
-      # Release 是正式发布, Artifacts 是临时备份。
-      # 即使 Release 创建失败 (比如 tag 冲突), Artifacts 里也有固件。
-      # 保留 7 天, 够下载了。
-      #
-      # 【if: always() && success】
-      #   always(): 不管前面成功失败都执行 (但后面加了条件判断)
-      #   steps.Build.outcome == 'success': 编译步骤成功
-      # 用 always() 是为了即使后面的 Release 步骤失败, 也能上传备份。
-      # ============================================================
+      # ------------------------------------------------------------
       - name: Upload firmware to Artifacts (backup)
         if: always() && steps.Build.outcome == 'success'
         uses: actions/upload-artifact@v6
