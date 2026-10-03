@@ -280,7 +280,8 @@ jobs:
             ### 系统优化
             - BBR 拥塞控制
             - CPU 频率显示 (mtk-cpufreq)
-            - USB 存储支持 (ext4/exFAT/NTFS3/VFAT)
+            - USB 存储支持 (ext4/exFAT/NTFS3/VFAT) + 自动 Samba 共享
+            - IPK 软件源: 中科大镜像
             - 默认 LAN IP: 10.10.6.1
 
             ### 刷入方法
