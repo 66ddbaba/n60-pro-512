@@ -155,9 +155,11 @@ echo ""
 echo "--- 5. 系统优化 ---"
 
 # 5.1 BBR 拥塞控制
-# 全部通过 uci-defaults 实现: 加载模块 + 设置sysctl + 写配置文件(持久化)
-# 不使用 modules-boot.d / sysctl.d 文件方式, 避免时序问题
-echo "  [OK] BBR 拥塞控制 (通过 uci-defaults 设置)"
+# 1) modules-boot.d 提前加载模块 (确保 sysctl/turboacc 跑之前模块已就绪)
+# 2) uci-defaults 里通过 turboacc 配置启用 (防止被 turboacc 覆盖)
+mkdir -p files/etc/modules-boot.d
+echo "tcp_bbr" > files/etc/modules-boot.d/tcp-bbr
+echo "  [OK] BBR 拥塞控制 (modules-boot.d + turboacc)"
 
 # 5.2 CPU 频率显示 (mtk-cpufreq + cpuinfo)
 mkdir -p files/usr/bin files/sbin
@@ -353,6 +355,6 @@ echo "  DIY Part 1 完成!"
 echo "============================================================"
 echo "  DTS: 内存 2GB / 无 NMBM / UBI 506.5MB"
 echo "  第三方包: luci-app-easytier"
-echo "  系统优化: BBR(uci-defaults) + CPU频率 + 中科大软件源"
+echo "  系统优化: BBR(modules-boot.d + turboacc) + CPU频率 + 中科大软件源 + 主机名"
 echo "  USB存储: 自动挂载 + 自动Samba共享 + ext4/exFAT/NTFS3/VFAT"
 echo "============================================================"

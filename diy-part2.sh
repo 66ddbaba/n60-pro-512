@@ -73,6 +73,10 @@ echo "--- 4. 新增软件包 ---"
 
 cat >> .config << 'EOF'
 
+# daed (eBPF 透明代理)
+CONFIG_PACKAGE_daed=y
+CONFIG_PACKAGE_luci-app-daed=y
+
 # EasyTier (虚拟局域网)
 CONFIG_PACKAGE_easytier=y
 CONFIG_PACKAGE_luci-app-easytier=y
@@ -107,15 +111,15 @@ CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 
 EOF
-echo "  [OK] EasyTier / ddns-go / Samba4 / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] daed / EasyTier / ddns-go / Samba4 / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
 # 5. rootfs 分区大小
 # ============================================================================
 echo ""
 echo "--- 5. rootfs 分区大小 ---"
-echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=50' >> .config
-echo "  [OK] 50MB (overlay ~450MB 可用)"
+echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=70' >> .config
+echo "  [OK] 70MB (overlay ~430MB 可用)"
 
 # ============================================================================
 # 6. 第二次 defconfig (补齐依赖)
@@ -185,7 +189,8 @@ require_pkg() {
 
 echo ""
 echo "[必需包 (缺了直接退出)]"
-for p in ddns-go luci-app-ddns-go \
+for p in daed luci-app-daed \
+         ddns-go luci-app-ddns-go \
          easytier luci-app-easytier \
          samba4-server luci-app-samba4 wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
@@ -235,10 +240,10 @@ echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成!"
 echo "============================================================"
-echo "  新增: EasyTier / ddns-go / samba4 / wsdd2"
+echo "  新增: daed / EasyTier / ddns-go"
+echo "        samba4 / wsdd2"
 echo "        vnstat2 / nlbwmon / argon / ttyd"
 echo "        USB存储支持 (ext4/exFAT/NTFS3/VFAT)"
-echo "        daed内核支持 (BPF/BTF, 包未选, 后续可opkg安装)"
 echo "  精简: 移除 ${REMOVE_COUNT} 个包 (wrtbwmon 系列)"
 echo "  总包数: ${TOTAL_PKGS} 个"
 echo "  CPU频率: mtk-cpufreq + cpuinfo 脚本"
