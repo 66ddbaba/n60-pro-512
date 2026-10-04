@@ -73,8 +73,9 @@ echo "--- 4. 新增软件包 ---"
 
 cat >> .config << 'EOF'
 
-# daed (eBPF 透明代理, kenzok8 版, 只装本体)
+# daed (eBPF 透明代理)
 CONFIG_PACKAGE_daed=y
+CONFIG_PACKAGE_luci-app-daed=y
 
 # EasyTier (虚拟局域网)
 CONFIG_PACKAGE_easytier=y
@@ -188,7 +189,7 @@ require_pkg() {
 
 echo ""
 echo "[必需包 (缺了直接退出)]"
-for p in daed \
+for p in daed luci-app-daed \
          ddns-go luci-app-ddns-go \
          easytier luci-app-easytier \
          samba4-server luci-app-samba4 wsdd2 \
@@ -239,7 +240,7 @@ echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成!"
 echo "============================================================"
-echo "  新增: daed (kenzok8版, 仅本体) / EasyTier / ddns-go"
+echo "  新增: daed / EasyTier / ddns-go"
 echo "        samba4 / wsdd2"
 echo "        vnstat2 / nlbwmon / argon / ttyd"
 echo "        USB存储支持 (ext4/exFAT/NTFS3/VFAT)"

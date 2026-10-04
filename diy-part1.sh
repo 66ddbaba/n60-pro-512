@@ -148,9 +148,6 @@ clone_repo() {
 # luci-app-easytier: feed 里没有
 clone_repo "package/luci-app-easytier" "https://github.com/EasyTier/luci-app-easytier.git" || true
 
-# daed (kenzok8 版, 版本比官方 feed 新, 只装本体不装luci界面)
-clone_repo "package/openwrt-daede" "https://github.com/kenzok8/openwrt-daede.git" || true
-
 # ============================================================================
 # 5. 系统优化 (files/ 目录)
 # ============================================================================
@@ -357,7 +354,7 @@ echo "============================================================"
 echo "  DIY Part 1 完成!"
 echo "============================================================"
 echo "  DTS: 内存 2GB / 无 NMBM / UBI 506.5MB"
-echo "  第三方包: luci-app-easytier / daed (kenzok8)"
+echo "  第三方包: luci-app-easytier"
 echo "  系统优化: BBR(modules-boot.d + turboacc) + CPU频率 + 中科大软件源 + 主机名"
 echo "  USB存储: 自动挂载 + 自动Samba共享 + ext4/exFAT/NTFS3/VFAT"
 echo "============================================================"
