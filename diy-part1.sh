@@ -148,6 +148,15 @@ clone_repo() {
 # luci-app-easytier: feed 里没有
 clone_repo "package/luci-app-easytier" "https://github.com/EasyTier/luci-app-easytier.git" || true
 
+# daed 新版源码 (kenzok8/openwrt-daede): eBPF 透明代理, 性能优化版
+# 只装 daed 本体, 不装 luci-app-daede (diy-part2 只选 CONFIG_PACKAGE_daed=y)
+# 新版要求 go >= 1.26, 由 diy-part2 的 GOTOOLCHAIN=auto 修复配合
+clone_repo "package/openwrt-daede" "https://github.com/kenzok8/openwrt-daede.git" || true
+
+# Lucky (gdy666): DDNS/反向代理/端口转发/网络唤醒, 替代 ddns-go
+# 含 lucky (核心) + luci-app-lucky (LuCI) + luci-i18n-lucky-zh-cn (中文)
+clone_repo "package/luci-app-lucky" "https://github.com/gdy666/luci-app-lucky.git" || true
+
 # ============================================================================
 # 5. 系统优化 (files/ 目录)
 # ============================================================================
@@ -155,11 +164,14 @@ echo ""
 echo "--- 5. 系统优化 ---"
 
 # 5.1 BBR 拥塞控制
-# 1) modules-boot.d 提前加载模块 (确保 sysctl/turboacc 跑之前模块已就绪)
-# 2) uci-defaults 里通过 turboacc 配置启用 (防止被 turboacc 覆盖)
+# 1) modules-boot.d 提前加载 tcp_bbr 模块
+# 2) uci-defaults 设置 turboacc 的 tcpcca 选项 (见下方 99-custom-settings)
+#    turboacc-mtk 的 init 脚本开机时读取 tcpcca 并强制写入内核,
+#    不设置就会一直回落到默认的 cubic (之前用的 bbr_cca 是官方 turboacc 的选项名,
+#    这个 MTK 版根本不读它, 所以怎么设置都不生效)
 mkdir -p files/etc/modules-boot.d
 echo "tcp_bbr" > files/etc/modules-boot.d/tcp-bbr
-echo "  [OK] BBR 拥塞控制 (modules-boot.d + turboacc)"
+echo "  [OK] BBR 拥塞控制 (modules-boot.d + turboacc tcpcca)"
 
 # 5.2 CPU 频率显示 (mtk-cpufreq + cpuinfo)
 mkdir -p files/usr/bin files/sbin
@@ -217,10 +229,15 @@ cat > files/etc/uci-defaults/99-custom-settings << 'UCIEOF'
 #!/bin/sh
 # 首次启动执行一次, 执行后自动删除
 
-# BBR 拥塞控制 (通过 turboacc 配置启用, 防止被 turboacc 覆盖)
-uci set turboacc.config.bbr_cca='1'
+# BBR 拥塞控制
+# padavanonly 的 turboacc-mtk init 脚本 (START=90) 开机时执行:
+#   config_get "tcpcca" "config" "tcpcca" "cubic"
+#   sysctl -w net.ipv4.tcp_congestion_control="$tcpcca"
+# 选项名是 tcpcca (官方 turboacc 才叫 bbr_cca), 不设置就永远回落 cubic
+uci -q get turboacc.config >/dev/null || uci set turboacc.config=turboacc
+uci set turboacc.config.tcpcca='bbr'
 uci commit turboacc
-logger -t uci-defaults "BBR 拥塞控制: 已通过 turboacc 启用"
+logger -t uci-defaults "BBR: turboacc tcpcca=bbr 已设置, 开机时生效"
 
 # IPK 软件源改为中科大镜像
 # 默认源: mirrors.vsean.net/openwrt → 中科大: mirrors.ustc.edu.cn/immortalwrt
@@ -354,7 +371,7 @@ echo "============================================================"
 echo "  DIY Part 1 完成!"
 echo "============================================================"
 echo "  DTS: 内存 2GB / 无 NMBM / UBI 506.5MB"
-echo "  第三方包: luci-app-easytier"
-echo "  系统优化: BBR(modules-boot.d + turboacc) + CPU频率 + 中科大软件源 + 主机名"
+echo "  第三方包: luci-app-easytier / daed(kenzok8) / luci-app-lucky"
+echo "  系统优化: BBR(modules-boot.d + turboacc tcpcca) + CPU频率 + 中科大软件源 + 主机名"
 echo "  USB存储: 自动挂载 + 自动Samba共享 + ext4/exFAT/NTFS3/VFAT"
 echo "============================================================"

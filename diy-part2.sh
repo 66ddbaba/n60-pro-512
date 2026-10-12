@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================================
 #  DIY Part 2 - 生成 .config (feeds 安装后执行)
-#  内容: 加载模板 / 选设备 / 加内核选项 / 选软件包 / 精简 / 验证
+#  内容: 加载模板 / 选设备 / 内核选项 / Go工具链修复 / 选软件包 / 精简 / 验证
 # ============================================================================
 set -e
 
@@ -58,32 +58,61 @@ EOF
 echo "  [OK] DEVEL + BTF + cgroup + BPF + XDP + LLVM"
 
 # ============================================================================
-# 3. 第一次 defconfig
+# 3. Go 工具链修复 + daed 源去重
 # ============================================================================
 echo ""
-echo "--- 3. 第一次 defconfig ---"
+echo "--- 3. Go 工具链修复 + daed 源去重 ---"
+
+# 3A. GOTOOLCHAIN=auto
+#     kenzok8 的新版 daed 要求 go >= 1.26, feeds 里是 1.23 且 GOTOOLCHAIN=local
+#     会直接报错退出; 改为 auto 后编译时自动下载所需版本
+GO_DIR="feeds/packages/lang/golang"
+if [ -d "$GO_DIR" ]; then
+    sed -i 's/GOTOOLCHAIN=local/GOTOOLCHAIN=auto/g; s/GOTOOLCHAIN:=local/GOTOOLCHAIN:=auto/g' "$GO_DIR"/*.mk
+    echo "  [OK] GOTOOLCHAIN=auto (编译时自动下载新版 Go)"
+else
+    echo "  [警告] 未找到 $GO_DIR, 跳过 Go 工具链修复"
+fi
+
+# 3B. daed 源去重: feeds 里的官方旧版 daed/luci-app-daed 移除
+#     只用 diy-part1 克隆的 kenzok8 新版 (package/openwrt-daede), 避免同名冲突
+for f in package/feeds/packages/daed package/feeds/luci/daed package/feeds/luci/luci-app-daed; do
+    if [ -e "$f" ]; then
+        rm -f "$f"
+        echo "  [OK] 移除 feeds 包: $f (改用 kenzok8 新版)"
+    fi
+done
+
+# ============================================================================
+# 4. 第一次 defconfig
+# ============================================================================
+echo ""
+echo "--- 4. 第一次 defconfig ---"
 make defconfig
 echo "  [OK] 完成"
 
 # ============================================================================
-# 4. 新增软件包
+# 5. 新增软件包
 # ============================================================================
 echo ""
-echo "--- 4. 新增软件包 ---"
+echo "--- 5. 新增软件包 ---"
 
 cat >> .config << 'EOF'
 
-# daed (eBPF 透明代理)
+# daed (eBPF 透明代理) - kenzok8 新版源码, 只装本体 (不装 luci-app-daede)
 CONFIG_PACKAGE_daed=y
-CONFIG_PACKAGE_luci-app-daed=y
 
 # EasyTier (虚拟局域网)
 CONFIG_PACKAGE_easytier=y
 CONFIG_PACKAGE_luci-app-easytier=y
 
-# ddns-go (动态域名)
-CONFIG_PACKAGE_ddns-go=y
-CONFIG_PACKAGE_luci-app-ddns-go=y
+# Lucky (DDNS/反向代理/端口转发/网络唤醒, 替代 ddns-go)
+CONFIG_PACKAGE_lucky=y
+CONFIG_PACKAGE_luci-app-lucky=y
+CONFIG_PACKAGE_luci-i18n-lucky-zh-cn=y
+
+# iftop (各IP实时网速, 在 ttyd/SSH 终端里运行)
+CONFIG_PACKAGE_iftop=y
 
 # Samba4 + wsdd2 (USB存储自动共享)
 CONFIG_PACKAGE_samba4-server=y
@@ -98,7 +127,7 @@ CONFIG_PACKAGE_kmod-usb-storage=y
 CONFIG_PACKAGE_kmod-usb-storage-extras=y
 CONFIG_PACKAGE_kmod-usb-storage-uas=y
 
-# 流量统计: vnstat2 + nlbwmon
+# 流量统计: vnstat2 (接口历史) + nlbwmon (各IP流量)
 CONFIG_PACKAGE_vnstat2=y
 CONFIG_PACKAGE_vnstat2-image=y
 CONFIG_PACKAGE_luci-app-vnstat2=y
@@ -111,29 +140,29 @@ CONFIG_PACKAGE_ttyd=y
 CONFIG_PACKAGE_luci-app-ttyd=y
 
 EOF
-echo "  [OK] daed / EasyTier / ddns-go / Samba4 / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
+echo "  [OK] daed(kenzok8) / EasyTier / Lucky / iftop / Samba4 / wsdd2 / vnstat2 / nlbwmon / argon / ttyd"
 
 # ============================================================================
-# 5. rootfs 分区大小
+# 6. rootfs 分区大小
 # ============================================================================
 echo ""
-echo "--- 5. rootfs 分区大小 ---"
+echo "--- 6. rootfs 分区大小 ---"
 echo 'CONFIG_TARGET_ROOTFS_PARTSIZE=70' >> .config
 echo "  [OK] 70MB (overlay ~430MB 可用)"
 
 # ============================================================================
-# 6. 第二次 defconfig (补齐依赖)
+# 7. 第二次 defconfig (补齐依赖)
 # ============================================================================
 echo ""
-echo "--- 6. 第二次 defconfig ---"
+echo "--- 7. 第二次 defconfig ---"
 make defconfig
 echo "  [OK] 完成"
 
 # ============================================================================
-# 7. 精简 (只删被替代的 wrtbwmon)
+# 8. 精简 (只删被替代的 wrtbwmon)
 # ============================================================================
 echo ""
-echo "--- 7. 精简固件 ---"
+echo "--- 8. 精简固件 ---"
 
 REMOVE_COUNT=0
 remove_pkg() {
@@ -151,10 +180,10 @@ echo "  [A] 被替代: wrtbwmon (→ vnstat2 + nlbwmon)"
 echo "  合计移除: ${REMOVE_COUNT} 个包"
 
 # ============================================================================
-# 8. 输出包列表
+# 9. 输出包列表
 # ============================================================================
 echo ""
-echo "--- 8. 输出包列表 ---"
+echo "--- 9. 输出包列表 ---"
 
 PKG_LIST="package-list.txt"
 grep "^CONFIG_PACKAGE_.*=y" .config \
@@ -172,7 +201,7 @@ echo "  内核模块: $(grep -c '^kmod-' "$PKG_LIST") 个"
 echo "  其他包:   $(grep -cv -e '^luci-' -e '^kmod-' "$PKG_LIST") 个"
 
 # ============================================================================
-# 9. 验证
+# 10. 验证
 # ============================================================================
 echo ""
 echo "=== 验证 ==="
@@ -189,9 +218,10 @@ require_pkg() {
 
 echo ""
 echo "[必需包 (缺了直接退出)]"
-for p in daed luci-app-daed \
-         ddns-go luci-app-ddns-go \
+for p in daed \
          easytier luci-app-easytier \
+         lucky luci-app-lucky \
+         iftop \
          samba4-server luci-app-samba4 wsdd2 \
          vnstat2 luci-app-vnstat2 nlbwmon luci-app-nlbwmon \
          luci-theme-argon ttyd luci-app-ttyd; do
@@ -240,12 +270,12 @@ echo ""
 echo "============================================================"
 echo "  DIY Part 2 完成!"
 echo "============================================================"
-echo "  新增: daed / EasyTier / ddns-go"
+echo "  新增: daed(kenzok8,仅本体) / EasyTier / Lucky / iftop"
 echo "        samba4 / wsdd2"
 echo "        vnstat2 / nlbwmon / argon / ttyd"
 echo "        USB存储支持 (ext4/exFAT/NTFS3/VFAT)"
 echo "  精简: 移除 ${REMOVE_COUNT} 个包 (wrtbwmon 系列)"
 echo "  总包数: ${TOTAL_PKGS} 个"
-echo "  CPU频率: mtk-cpufreq + cpuinfo 脚本"
+echo "  Go工具链: GOTOOLCHAIN=auto"
 echo "  rootfs: 70MB (overlay ~430MB)"
 echo "============================================================"
