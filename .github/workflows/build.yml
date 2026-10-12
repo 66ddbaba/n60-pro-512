@@ -247,7 +247,7 @@ jobs:
           NEW_NAME="immortalwrt-${VERSION}-${DATE}-netcore_n60-pro-506.5MB-squashfs-sysupgrade.bin"
           cp "$SYSUPGRADE" "/tmp/firmware/${NEW_NAME}"
           echo "=== 固件文件 ==="
-          ls -lh /tmp/firmware/
+          ls -lh /tmp/
 
       # ------------------------------------------------------------
       # Step 11: 发布到 GitHub Releases
@@ -269,16 +269,16 @@ jobs:
             - WiFi 模板: mt7975-ipailna-high-power（237高功率）
 
             ### 内置插件
-            - 代理: daed (eBPF 透明代理)
+            - 代理: daed (eBPF 透明代理, kenzok8 新版源, 仅本体)
             - 组网: EasyTier (虚拟局域网)
-            - DDNS: ddns-go
+            - 网络工具: Lucky (DDNS/反向代理/端口转发/网络唤醒)
             - 共享: Samba4 + wsdd2 (USB存储自动共享)
-            - 流量: vnstat2 + nlbwmon
+            - 流量: vnstat2 (接口统计) + nlbwmon (各IP统计) + iftop (各IP实时网速)
             - 主题: luci-theme-argon
             - 工具: ttyd (网页终端)
 
             ### 系统优化
-            - BBR 拥塞控制 (turboacc)
+            - BBR 拥塞控制 (turboacc tcpcca=bbr)
             - CPU 频率显示 (mtk-cpufreq)
             - USB 存储支持 (ext4/exFAT/NTFS3/VFAT) + 自动 Samba 共享
             - IPK 软件源: 中科大镜像
